@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, ExternalLink, Trash2, Plus } from "lucide-react";
+import { Check, Copy, ExternalLink, Trash2, Plus, X } from "lucide-react";
 import type { AgentCompanionConfig, ActivityEvent, ApprovalRequest, RunnerStatus } from "@agent-companion/shared";
 import { Button, buttonVariants } from "./components/ui/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card.js";
@@ -1376,75 +1376,60 @@ function RunCommandRulesEditor({
   rules: AgentCompanionConfig["runCommandRules"];
   onChange: (rules: AgentCompanionConfig["runCommandRules"]) => void;
 }) {
+  const [inputValue, setInputValue] = useState("");
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && inputValue.trim()) {
+      e.preventDefault();
+      const parts = inputValue.trim().split(" ").filter(Boolean);
+      onChange([
+        ...rules,
+        {
+          id: crypto.randomUUID(),
+          label: inputValue.trim(),
+          command: parts,
+          approvalRequired: false,
+        },
+      ]);
+      setInputValue("");
+    }
+  };
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>\`run_command\` Policy</CardTitle>
-        <CardDescription>Rules to bypass or enforce approvals for specific shell commands</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        {rules.map((rule) => (
-          <div key={rule.id} className="flex items-center gap-3">
-            <Input
-              value={rule.label}
-              onChange={(event) =>
-                onChange(rules.map((entry) => (entry.id === rule.id ? { ...entry, label: event.target.value } : entry)))
-              }
-              placeholder="Label"
-              className="w-1/4 h-9 bg-white/5 focus:ring-white/20"
-            />
-            <Input
-              value={rule.command.join(" ")}
-              onChange={(event) =>
-                onChange(
-                  rules.map((entry) =>
-                    entry.id === rule.id
-                      ? { ...entry, command: event.target.value.split(" ").map((part) => part.trim()).filter(bool => bool) }
-                      : entry,
-                  ),
-                )
-              }
-              placeholder="git status"
-              className="flex-1 font-mono text-sm h-9 bg-white/5 focus:ring-white/20"
-            />
-            <div className="flex items-center gap-2 shrink-0 px-2 pl-4">
-              <Switch
-                id={`rule-approval-${rule.id}`}
-                checked={rule.approvalRequired}
-                onCheckedChange={(checked) =>
-                  onChange(
-                    rules.map((entry) =>
-                      entry.id === rule.id ? { ...entry, approvalRequired: checked } : entry,
-                    ),
-                  )
-                }
-              />
-              <Label htmlFor={`rule-approval-${rule.id}`} className="text-xs text-slate-300 cursor-pointer">Needs approval</Label>
+    <div className="flex flex-col md:flex-row gap-6 items-start py-4">
+      <div className="md:w-1/3 pt-2">
+        <h3 className="text-base font-medium text-slate-100 mb-1">Command Allowlist</h3>
+        <p className="text-sm text-slate-400">Commands that can run automatically</p>
+      </div>
+
+      <div className="md:w-2/3 w-full bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-wrap gap-2 items-center">
+        {rules.map((rule) => {
+          const cmdString = rule.command.join(" ");
+          return (
+            <div
+              key={rule.id}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-transparent border border-white/20 rounded-lg text-sm text-slate-300 hover:text-slate-100 min-w-0"
+            >
+              <span className="truncate">{cmdString}</span>
+              <button
+                type="button"
+                onClick={() => onChange(rules.filter((entry) => entry.id !== rule.id))}
+                className="text-slate-500 hover:text-white shrink-0 ml-1"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             </div>
-            <Button variant="ghost" size="icon" onClick={() => onChange(rules.filter((entry) => entry.id !== rule.id))} className="text-slate-500 hover:text-red-400 shrink-0 h-9 w-9">
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
-        ))}
-        <Button
-          variant="outline"
-          size="sm"
-          className="mt-3 w-fit border-dashed border-white/20 hover:border-white/40 hover:bg-white/5 text-slate-300 rounded-full"
-          onClick={() =>
-            onChange([
-              ...rules,
-              {
-                id: crypto.randomUUID(),
-                label: "New command rule",
-                command: ["git", "status"],
-                approvalRequired: true,
-              },
-            ])
-          }
-        >
-          <Plus className="h-4 w-4 mr-1.5" /> Add Rule
-        </Button>
-      </CardContent>
-    </Card>
+          );
+        })}
+        <input
+          type="text"
+          className="flex-1 min-w-[140px] h-8 bg-transparent border-none text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-0 px-2"
+          placeholder="Add command (e.g. pnpm install) ..."
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+      </div>
+    </div>
   );
 }
