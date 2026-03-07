@@ -2,6 +2,9 @@ import {
     DEFAULT_ACTIVITY_LIMIT,
     agentCompanionConfigSchema,
     approvalDecisionSchema,
+    plutoVoiceSessionAttachInputSchema,
+    plutoVoiceSessionCreateInputSchema,
+    plutoVoiceSessionDetachInputSchema,
 } from "@agent-companion/shared";
 import express from "express";
 import http from "node:http";
@@ -51,6 +54,33 @@ export async function startControlServer(state: RunnerState, port: number) {
     res.json(await state.createPlutoCommentary(req.body));
   });
 
+  app.get("/internal/pluto/sessions", (_req, res) => {
+    res.json({ sessions: state.listPlutoVoiceSessions() });
+  });
+
+  app.get("/internal/pluto/sessions/:sessionId", (req, res) => {
+    res.json({ session: state.getPlutoVoiceSession(req.params.sessionId) });
+  });
+
+  app.post("/internal/pluto/sessions", (req, res) => {
+    const input = plutoVoiceSessionCreateInputSchema.parse(req.body ?? {});
+    res.status(201).json(state.createPlutoVoiceSession(input));
+  });
+
+  app.post("/internal/pluto/sessions/:sessionId/attach", (req, res) => {
+    const input = plutoVoiceSessionAttachInputSchema.parse(req.body ?? {});
+    res.json(state.attachPlutoVoiceSession(req.params.sessionId, input));
+  });
+
+  app.post("/internal/pluto/sessions/:sessionId/detach", (req, res) => {
+    const input = plutoVoiceSessionDetachInputSchema.parse(req.body ?? {});
+    res.json(state.detachPlutoVoiceSession(req.params.sessionId, input.clientId));
+  });
+
+  app.post("/internal/pluto/sessions/:sessionId/close", (req, res) => {
+    res.json(state.closePlutoVoiceSession(req.params.sessionId));
+  });
+
   app.post("/internal/approvals/decision", async (req, res) => {
     const decision = approvalDecisionSchema.parse(req.body);
     const result = await state.applyApprovalDecision(decision);
@@ -75,18 +105,21 @@ export async function startControlServer(state: RunnerState, port: number) {
     ws.send(JSON.stringify({ type: "activity_snapshot", data: state.listActivity(DEFAULT_ACTIVITY_LIMIT) }));
     ws.send(JSON.stringify({ type: "approvals", data: state.listApprovals() }));
     ws.send(JSON.stringify({ type: "pluto", data: state.getPlutoState() }));
+    ws.send(JSON.stringify({ type: "pluto_voice_sessions", data: state.listPlutoVoiceSessions() }));
 
     const onStatus = (data: unknown) => ws.send(JSON.stringify({ type: "status", data }));
     const onActivity = (data: unknown) => ws.send(JSON.stringify({ type: "activity", data }));
     const onApproval = (data: unknown) => ws.send(JSON.stringify({ type: "approvals", data }));
     const onConfig = (data: unknown) => ws.send(JSON.stringify({ type: "config", data }));
     const onPluto = (data: unknown) => ws.send(JSON.stringify({ type: "pluto", data }));
+    const onPlutoVoiceSessions = (data: unknown) => ws.send(JSON.stringify({ type: "pluto_voice_sessions", data }));
 
     state.events.on("status", onStatus);
     state.events.on("activity", onActivity);
     state.events.on("approval", onApproval);
     state.events.on("config", onConfig);
     state.events.on("pluto", onPluto);
+    state.events.on("pluto_voice_sessions", onPlutoVoiceSessions);
 
     ws.on("close", () => {
       state.events.off("status", onStatus);
@@ -94,6 +127,7 @@ export async function startControlServer(state: RunnerState, port: number) {
       state.events.off("approval", onApproval);
       state.events.off("config", onConfig);
       state.events.off("pluto", onPluto);
+      state.events.off("pluto_voice_sessions", onPlutoVoiceSessions);
     });
   });
 
@@ -101,7 +135,13 @@ export async function startControlServer(state: RunnerState, port: number) {
     server.listen(port, "127.0.0.1", () => resolve());
   });
 
+  const address = server.address();
+  const actualPort = typeof address === "object" && address ? address.port : port;
+
   return {
+    app,
+    port: actualPort,
+    server,
     close: async () => {
       wsServer.close();
       await new Promise<void>((resolve, reject) => {

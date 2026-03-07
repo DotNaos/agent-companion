@@ -18,6 +18,11 @@ import {
     notifyPlutoInputSchema,
     plutoCommentaryInputSchema,
     plutoStateSchema,
+    plutoVoiceSessionAttachInputSchema,
+    plutoVoiceSessionClientSchema,
+    plutoVoiceSessionCreateInputSchema,
+    plutoVoiceSessionSchema,
+    plutoVoiceSessionSummarySchema,
     readFileInputSchema,
     relayRequestSchema,
     requiresApproval,
@@ -38,6 +43,8 @@ import {
     type ApprovalRequest,
     type Capability,
     type PlutoMessage,
+    type PlutoVoiceSession,
+    type PlutoVoiceSessionClient,
     type RelayRequest,
     type ToolName,
 } from "@agent-companion/shared";
@@ -83,6 +90,8 @@ interface PendingApproval extends ApprovalRequest {
 
 type ApprovalWaiter = (decision: ApprovalDecision["decision"]) => void;
 
+type PlutoVoiceSessionRecord = PlutoVoiceSession;
+
 export class RunnerState {
   readonly events = new EventEmitter();
   readonly processManager: ProcessManager;
@@ -95,6 +104,7 @@ export class RunnerState {
   private readonly approvedGrantKeys = new Set<string>();
   private activePlutoMessage: PlutoMessage | null = null;
   private readonly plutoHistory: PlutoMessage[] = [];
+  private readonly plutoVoiceSessions = new Map<string, PlutoVoiceSessionRecord>();
   private plutoPending = false;
   private plutoLastError: string | null = null;
   private connectedToRemote = false;
@@ -192,6 +202,106 @@ export class RunnerState {
 
   getPlutoAudio(messageId: string) {
     return this.plutoService.readAudio(messageId);
+  }
+
+  listPlutoVoiceSessions() {
+    return Array.from(this.plutoVoiceSessions.values())
+      .map((session) => plutoVoiceSessionSummarySchema.parse(session))
+      .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
+  }
+
+  getPlutoVoiceSession(sessionId: string) {
+    const session = this.plutoVoiceSessions.get(sessionId);
+    if (!session) {
+      throw new AppError("PLUTO_SESSION_NOT_FOUND", "Pluto voice session not found", 404);
+    }
+    return plutoVoiceSessionSchema.parse(session);
+  }
+
+  createPlutoVoiceSession(input: unknown) {
+    const parsed = plutoVoiceSessionCreateInputSchema.parse(input);
+    const now = new Date().toISOString();
+    const sessionId = randomUUID();
+    const session: PlutoVoiceSessionRecord = plutoVoiceSessionSchema.parse({
+      id: sessionId,
+      title: parsed.title ?? null,
+      host: {
+        id: this.env.RUNNER_ID,
+        type: "local",
+        label: "This Mac",
+      },
+      status: "idle",
+      model: this.plutoService.getModel(),
+      createdAt: now,
+      lastActivityAt: now,
+      ownerClientId: null,
+      speakerClientId: null,
+      clients: [],
+    });
+
+    let client: PlutoVoiceSessionClient | null = null;
+    if (parsed.client) {
+      client = this.attachClientToVoiceSessionRecord(session, parsed.client);
+      session.ownerClientId = client.id;
+    }
+
+    this.plutoVoiceSessions.set(session.id, session);
+    this.logActivity("pluto", `Pluto voice session created`, {
+      sessionId: session.id,
+      title: session.title,
+    });
+    this.emitPlutoVoiceSessions();
+    return {
+      session: plutoVoiceSessionSchema.parse(session),
+      client,
+    };
+  }
+
+  attachPlutoVoiceSession(sessionId: string, input: unknown) {
+    const session = this.requirePlutoVoiceSessionRecord(sessionId);
+    const parsed = plutoVoiceSessionAttachInputSchema.parse(input);
+    const client = this.attachClientToVoiceSessionRecord(session, parsed);
+    this.touchPlutoVoiceSession(session);
+    this.emitPlutoVoiceSessions();
+    return {
+      session: plutoVoiceSessionSchema.parse(session),
+      client,
+    };
+  }
+
+  detachPlutoVoiceSession(sessionId: string, clientId: string) {
+    const session = this.requirePlutoVoiceSessionRecord(sessionId);
+    const nextClients = session.clients.filter((client) => client.id !== clientId);
+    if (nextClients.length === session.clients.length) {
+      throw new AppError("PLUTO_SESSION_CLIENT_NOT_FOUND", "Pluto voice session client not found", 404);
+    }
+    session.clients = nextClients;
+    if (session.ownerClientId === clientId) {
+      session.ownerClientId = session.clients[0]?.id ?? null;
+    }
+    if (session.speakerClientId === clientId) {
+      session.speakerClientId = null;
+      session.status = "idle";
+    }
+    this.touchPlutoVoiceSession(session);
+    this.emitPlutoVoiceSessions();
+    return {
+      session: plutoVoiceSessionSchema.parse(session),
+      detachedClientId: clientId,
+    };
+  }
+
+  closePlutoVoiceSession(sessionId: string) {
+    const session = this.requirePlutoVoiceSessionRecord(sessionId);
+    this.plutoVoiceSessions.delete(sessionId);
+    this.logActivity("pluto", `Pluto voice session closed`, {
+      sessionId,
+      title: session.title,
+    });
+    this.emitPlutoVoiceSessions();
+    return {
+      closedSessionId: sessionId,
+    };
   }
 
   updateConfig(next: AgentCompanionConfig) {
@@ -338,6 +448,10 @@ export class RunnerState {
     this.events.emit("pluto", this.getPlutoState());
   }
 
+  private emitPlutoVoiceSessions() {
+    this.events.emit("pluto_voice_sessions", this.listPlutoVoiceSessions());
+  }
+
   private setPlutoPending(next: boolean) {
     this.plutoPending = next;
     this.emitPluto();
@@ -346,6 +460,48 @@ export class RunnerState {
   private setPlutoError(message: string | null) {
     this.plutoLastError = message;
     this.emitPluto();
+  }
+
+  private requirePlutoVoiceSessionRecord(sessionId: string) {
+    const session = this.plutoVoiceSessions.get(sessionId);
+    if (!session) {
+      throw new AppError("PLUTO_SESSION_NOT_FOUND", "Pluto voice session not found", 404);
+    }
+    return session;
+  }
+
+  private touchPlutoVoiceSession(session: PlutoVoiceSessionRecord) {
+    session.lastActivityAt = new Date().toISOString();
+  }
+
+  private attachClientToVoiceSessionRecord(
+    session: PlutoVoiceSessionRecord,
+    input: z.infer<typeof plutoVoiceSessionAttachInputSchema>,
+  ) {
+    if (input.requestedRole === "speaker" && session.speakerClientId) {
+      throw new AppError(
+        "PLUTO_SESSION_SPEAKER_OCCUPIED",
+        "Pluto voice session already has an active speaker",
+        409,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const client = plutoVoiceSessionClientSchema.parse({
+      id: randomUUID(),
+      label: input.label,
+      platform: input.platform ?? null,
+      joinedAt: now,
+      lastSeenAt: now,
+      canSendAudio: input.requestedRole === "speaker",
+      canReceiveAudio: input.canReceiveAudio,
+      canObserve: input.canObserve,
+    });
+    session.clients.push(client);
+    if (input.requestedRole === "speaker") {
+      session.speakerClientId = client.id;
+    }
+    return client;
   }
 
   private publishPlutoMessage(message: PlutoMessage, activityMessage: string) {

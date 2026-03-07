@@ -59,6 +59,99 @@ export const plutoStateSchema = z.object({
   history: z.array(plutoMessageSchema).default([]),
 });
 
+export const plutoVoiceSessionHostSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum(["local", "aryazos"]),
+  label: z.string().min(1),
+});
+
+export const plutoVoiceSessionClientSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  platform: z.string().min(1).nullable().default(null),
+  joinedAt: z.string(),
+  lastSeenAt: z.string(),
+  canSendAudio: z.boolean().default(true),
+  canReceiveAudio: z.boolean().default(true),
+  canObserve: z.boolean().default(true),
+});
+
+export const plutoVoiceSessionStatusSchema = z.enum([
+  "idle",
+  "listening",
+  "responding",
+  "error",
+]);
+
+export const plutoVoiceSessionSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().max(120).nullable().default(null),
+  host: plutoVoiceSessionHostSchema,
+  status: plutoVoiceSessionStatusSchema.default("idle"),
+  model: z.string().min(1),
+  createdAt: z.string(),
+  lastActivityAt: z.string(),
+  ownerClientId: z.string().min(1).nullable().default(null),
+  speakerClientId: z.string().min(1).nullable().default(null),
+  clients: z.array(plutoVoiceSessionClientSchema).default([]),
+});
+
+export const plutoVoiceSessionSummarySchema = plutoVoiceSessionSchema.pick({
+  id: true,
+  title: true,
+  host: true,
+  status: true,
+  model: true,
+  createdAt: true,
+  lastActivityAt: true,
+  ownerClientId: true,
+  speakerClientId: true,
+});
+
+export const plutoVoiceSessionAttachInputSchema = z.object({
+  label: z.string().min(1).max(120),
+  platform: z.string().min(1).max(80).optional(),
+  requestedRole: z.enum(["speaker", "observer"]).default("speaker"),
+  canReceiveAudio: z.boolean().default(true),
+  canObserve: z.boolean().default(true),
+});
+
+export const plutoVoiceSessionCreateInputSchema = z.object({
+  title: z.string().min(1).max(120).optional(),
+  client: plutoVoiceSessionAttachInputSchema.optional(),
+});
+
+export const plutoVoiceSessionCreateOutputSchema = z.object({
+  session: plutoVoiceSessionSchema,
+  client: plutoVoiceSessionClientSchema.nullable().default(null),
+});
+
+export const plutoVoiceSessionListOutputSchema = z.object({
+  sessions: z.array(plutoVoiceSessionSummarySchema),
+});
+
+export const plutoVoiceSessionGetOutputSchema = z.object({
+  session: plutoVoiceSessionSchema,
+});
+
+export const plutoVoiceSessionAttachOutputSchema = z.object({
+  session: plutoVoiceSessionSchema,
+  client: plutoVoiceSessionClientSchema,
+});
+
+export const plutoVoiceSessionDetachInputSchema = z.object({
+  clientId: z.string().min(1),
+});
+
+export const plutoVoiceSessionDetachOutputSchema = z.object({
+  session: plutoVoiceSessionSchema,
+  detachedClientId: z.string().min(1),
+});
+
+export const plutoVoiceSessionCloseOutputSchema = z.object({
+  closedSessionId: z.string().min(1),
+});
+
 export const allowedPathSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -461,6 +554,11 @@ export type PlutoDelivery = z.infer<typeof plutoDeliverySchema>;
 export type PlutoConfig = z.infer<typeof plutoConfigSchema>;
 export type PlutoMessage = z.infer<typeof plutoMessageSchema>;
 export type PlutoState = z.infer<typeof plutoStateSchema>;
+export type PlutoVoiceSessionHost = z.infer<typeof plutoVoiceSessionHostSchema>;
+export type PlutoVoiceSessionClient = z.infer<typeof plutoVoiceSessionClientSchema>;
+export type PlutoVoiceSessionStatus = z.infer<typeof plutoVoiceSessionStatusSchema>;
+export type PlutoVoiceSession = z.infer<typeof plutoVoiceSessionSchema>;
+export type PlutoVoiceSessionSummary = z.infer<typeof plutoVoiceSessionSummarySchema>;
 export type AllowedPath = z.infer<typeof allowedPathSchema>;
 export type TaskDefinition = z.infer<typeof taskDefinitionSchema>;
 export type RunCommandRule = z.infer<typeof runCommandRuleSchema>;
@@ -476,3 +574,12 @@ export type NotifyPlutoInput = z.infer<typeof notifyPlutoInputSchema>;
 export type NotifyPlutoOutput = z.infer<typeof notifyPlutoOutputSchema>;
 export type PlutoCommentaryInput = z.infer<typeof plutoCommentaryInputSchema>;
 export type PlutoCommentaryOutput = z.infer<typeof plutoCommentaryOutputSchema>;
+export type PlutoVoiceSessionCreateInput = z.infer<typeof plutoVoiceSessionCreateInputSchema>;
+export type PlutoVoiceSessionCreateOutput = z.infer<typeof plutoVoiceSessionCreateOutputSchema>;
+export type PlutoVoiceSessionListOutput = z.infer<typeof plutoVoiceSessionListOutputSchema>;
+export type PlutoVoiceSessionGetOutput = z.infer<typeof plutoVoiceSessionGetOutputSchema>;
+export type PlutoVoiceSessionAttachInput = z.infer<typeof plutoVoiceSessionAttachInputSchema>;
+export type PlutoVoiceSessionAttachOutput = z.infer<typeof plutoVoiceSessionAttachOutputSchema>;
+export type PlutoVoiceSessionDetachInput = z.infer<typeof plutoVoiceSessionDetachInputSchema>;
+export type PlutoVoiceSessionDetachOutput = z.infer<typeof plutoVoiceSessionDetachOutputSchema>;
+export type PlutoVoiceSessionCloseOutput = z.infer<typeof plutoVoiceSessionCloseOutputSchema>;

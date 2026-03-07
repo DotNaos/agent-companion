@@ -441,6 +441,96 @@ describe("RunnerState", () => {
       source: "remote-agent",
     });
   });
+
+  it("creates and lists Pluto voice sessions", () => {
+    const ctx = createContext();
+
+    const created = ctx.state.createPlutoVoiceSession({
+      title: "Laptop Pluto",
+      client: {
+        label: "Desktop app",
+        platform: "macOS",
+        requestedRole: "speaker",
+      },
+    });
+
+    expect(created.session).toMatchObject({
+      title: "Laptop Pluto",
+      status: "idle",
+      host: {
+        type: "local",
+        label: "This Mac",
+      },
+    });
+    expect(created.client).toMatchObject({
+      label: "Desktop app",
+      platform: "macOS",
+      canSendAudio: true,
+    });
+    expect(created.session.ownerClientId).toBe(created.client?.id);
+    expect(created.session.speakerClientId).toBe(created.client?.id);
+    expect(ctx.state.listPlutoVoiceSessions()).toHaveLength(1);
+  });
+
+  it("attaches and detaches observer clients from Pluto voice sessions", () => {
+    const ctx = createContext();
+    const created = ctx.state.createPlutoVoiceSession({
+      title: "Shared Pluto",
+      client: {
+        label: "Desktop app",
+        requestedRole: "speaker",
+      },
+    });
+
+    const attached = ctx.state.attachPlutoVoiceSession(created.session.id, {
+      label: "iPhone",
+      platform: "iOS",
+      requestedRole: "observer",
+    });
+
+    expect(attached.client).toMatchObject({
+      label: "iPhone",
+      platform: "iOS",
+      canSendAudio: false,
+      canReceiveAudio: true,
+    });
+    expect(attached.session.clients).toHaveLength(2);
+    expect(attached.session.speakerClientId).toBe(created.client?.id);
+
+    const detached = ctx.state.detachPlutoVoiceSession(created.session.id, attached.client.id);
+
+    expect(detached.detachedClientId).toBe(attached.client.id);
+    expect(detached.session.clients).toHaveLength(1);
+  });
+
+  it("prevents multiple active speaker clients in the same Pluto voice session", () => {
+    const ctx = createContext();
+    const created = ctx.state.createPlutoVoiceSession({
+      title: "Single mic",
+      client: {
+        label: "Desktop app",
+        requestedRole: "speaker",
+      },
+    });
+
+    expect(() =>
+      ctx.state.attachPlutoVoiceSession(created.session.id, {
+        label: "Watch",
+        platform: "watchOS",
+        requestedRole: "speaker",
+      }),
+    ).toThrowError(/active speaker/i);
+  });
+
+  it("closes Pluto voice sessions and removes them from the registry", () => {
+    const ctx = createContext();
+    const created = ctx.state.createPlutoVoiceSession({ title: "Closable Pluto" });
+
+    const closed = ctx.state.closePlutoVoiceSession(created.session.id);
+
+    expect(closed).toEqual({ closedSessionId: created.session.id });
+    expect(ctx.state.listPlutoVoiceSessions()).toHaveLength(0);
+  });
 });
 
 function createContext() {
