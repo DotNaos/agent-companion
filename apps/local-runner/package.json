@@ -11,6 +11,7 @@
         "typecheck": "tsc -p tsconfig.json --noEmit"
     },
     "dependencies": {
+        "@google/genai": "^1.30.0",
         "@agent-companion/shared": "workspace:*",
         "express": "^5.1.0",
         "pino": "^10.0.0",

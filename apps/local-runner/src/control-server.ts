@@ -1,16 +1,16 @@
-import http from "node:http";
-import express from "express";
-import { WebSocketServer } from "ws";
 import {
-  DEFAULT_ACTIVITY_LIMIT,
-  approvalDecisionSchema,
-  agentCompanionConfigSchema,
+    DEFAULT_ACTIVITY_LIMIT,
+    agentCompanionConfigSchema,
+    approvalDecisionSchema,
 } from "@agent-companion/shared";
+import express from "express";
+import http from "node:http";
+import { WebSocketServer } from "ws";
 import type { RunnerState } from "./state.js";
 
 export async function startControlServer(state: RunnerState, port: number) {
   const app = express();
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "15mb" }));
 
   app.get("/internal/status", (_req, res) => {
     res.json(state.getStatus());
@@ -32,6 +32,23 @@ export async function startControlServer(state: RunnerState, port: number) {
 
   app.get("/internal/approvals", (_req, res) => {
     res.json({ approvals: state.listApprovals() });
+  });
+
+  app.get("/internal/pluto", (_req, res) => {
+    res.json(state.getPlutoState());
+  });
+
+  app.get("/internal/pluto/audio/:messageId", (req, res) => {
+    const audio = state.getPlutoAudio(req.params.messageId);
+    if (!audio) {
+      res.status(404).json({ error: "Pluto audio not found" });
+      return;
+    }
+    res.type(audio.contentType).send(audio.buffer);
+  });
+
+  app.post("/internal/pluto/commentary", async (req, res) => {
+    res.json(await state.createPlutoCommentary(req.body));
   });
 
   app.post("/internal/approvals/decision", async (req, res) => {
@@ -57,22 +74,26 @@ export async function startControlServer(state: RunnerState, port: number) {
     ws.send(JSON.stringify({ type: "status", data: state.getStatus() }));
     ws.send(JSON.stringify({ type: "activity_snapshot", data: state.listActivity(DEFAULT_ACTIVITY_LIMIT) }));
     ws.send(JSON.stringify({ type: "approvals", data: state.listApprovals() }));
+    ws.send(JSON.stringify({ type: "pluto", data: state.getPlutoState() }));
 
     const onStatus = (data: unknown) => ws.send(JSON.stringify({ type: "status", data }));
     const onActivity = (data: unknown) => ws.send(JSON.stringify({ type: "activity", data }));
     const onApproval = (data: unknown) => ws.send(JSON.stringify({ type: "approvals", data }));
     const onConfig = (data: unknown) => ws.send(JSON.stringify({ type: "config", data }));
+    const onPluto = (data: unknown) => ws.send(JSON.stringify({ type: "pluto", data }));
 
     state.events.on("status", onStatus);
     state.events.on("activity", onActivity);
     state.events.on("approval", onApproval);
     state.events.on("config", onConfig);
+    state.events.on("pluto", onPluto);
 
     ws.on("close", () => {
       state.events.off("status", onStatus);
       state.events.off("activity", onActivity);
       state.events.off("approval", onApproval);
       state.events.off("config", onConfig);
+      state.events.off("pluto", onPluto);
     });
   });
 

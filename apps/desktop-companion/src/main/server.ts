@@ -1,24 +1,24 @@
+import {
+    AppError,
+    agentCompanionConfigSchema,
+    approvalDecisionSchema,
+    toErrorEnvelope,
+} from "@agent-companion/shared";
+import cookieParser from "cookie-parser";
+import express, { type Request, type Response } from "express";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import express, { type Request, type Response } from "express";
-import cookieParser from "cookie-parser";
 import { WebSocketServer } from "ws";
 import {
-  AppError,
-  agentCompanionConfigSchema,
-  approvalDecisionSchema,
-  toErrorEnvelope,
-} from "@agent-companion/shared";
-import {
-  createLoginUrl,
-  exchangeCodeForSession,
-  signSession,
-  verifySession,
-  writeSessionCookie,
+    createLoginUrl,
+    exchangeCodeForSession,
+    signSession,
+    verifySession,
+    writeSessionCookie,
 } from "./auth.js";
-import type { DesktopEnv } from "./env.js";
 import type { CursorTracker } from "./cursor-tracker.js";
+import type { DesktopEnv } from "./env.js";
 import type { RunnerBridge } from "./runner-bridge.js";
 
 import type { TunnelManager } from "./tunnel-manager.js";
@@ -107,6 +107,15 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
   app.get("/api/desktop/status", requireDesktopToken(desktopToken), (_req, res) => {
     res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker));
   });
+  app.get("/api/desktop/pluto/audio/:messageId", requireDesktopToken(desktopToken), async (req, res, next) => {
+    try {
+      const messageId = Array.isArray(req.params.messageId) ? req.params.messageId[0] : req.params.messageId;
+      const audio = await runnerBridge.fetchPlutoAudio(messageId);
+      res.type(audio.contentType).send(audio.buffer);
+    } catch (error) {
+      next(error);
+    }
+  });
   app.put("/api/desktop/config", requireDesktopToken(desktopToken), async (req, res, next) => {
     try {
       const config = agentCompanionConfigSchema.parse(req.body);
@@ -152,6 +161,15 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
   });
   app.get("/api/admin/approvals", (_req, res) => {
     res.json({ approvals: runnerBridge.getSnapshot().approvals });
+  });
+  app.get("/api/admin/pluto/audio/:messageId", async (req, res, next) => {
+    try {
+      const messageId = Array.isArray(req.params.messageId) ? req.params.messageId[0] : req.params.messageId;
+      const audio = await runnerBridge.fetchPlutoAudio(messageId);
+      res.type(audio.contentType).send(audio.buffer);
+    } catch (error) {
+      next(error);
+    }
   });
   app.put("/api/admin/config", async (req, res, next) => {
     try {

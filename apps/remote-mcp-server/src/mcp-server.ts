@@ -1,8 +1,8 @@
+import { toolInputSchemas, type ToolName } from "@agent-companion/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ZodRawShape } from "zod";
-import { toolInputSchemas, type ToolName } from "@agent-companion/shared";
-import type { RelayRegistry } from "./relay-registry.js";
 import type { AuthenticatedActor } from "./auth.js";
+import type { RelayRegistry } from "./relay-registry.js";
 
 const toolDescriptions: Record<ToolName, string> = {
   health_check: "Return the local runner health status.",
@@ -20,6 +20,8 @@ const toolDescriptions: Record<ToolName, string> = {
   create_todo_list: "Create a lightweight todo list for multi-step work.",
   update_todo_item: "Update a todo list item.",
   list_todo_items: "List todo lists and items.",
+  notify_pluto:
+    "Ask Pluto to tell the user something directly, optionally summarizing a longer remote-agent update into a short user-facing message.",
 };
 
 export function createMcpToolServer(relayRegistry: RelayRegistry, actor: AuthenticatedActor) {

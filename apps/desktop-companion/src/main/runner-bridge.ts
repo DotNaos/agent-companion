@@ -1,19 +1,22 @@
+import {
+    DEFAULT_ACTIVITY_LIMIT,
+    activityEventSchema,
+    agentCompanionConfigSchema,
+    approvalDecisionSchema,
+    approvalRequestSchema,
+    plutoCommentaryInputSchema,
+    plutoStateSchema,
+    runnerStatusSchema,
+} from "@agent-companion/shared";
 import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
-import {
-  DEFAULT_ACTIVITY_LIMIT,
-  activityEventSchema,
-  agentCompanionConfigSchema,
-  approvalDecisionSchema,
-  approvalRequestSchema,
-  runnerStatusSchema,
-} from "@agent-companion/shared";
 
 export interface RunnerSnapshot {
   status: ReturnType<typeof runnerStatusSchema.parse>;
   config: ReturnType<typeof agentCompanionConfigSchema.parse> | null;
   activity: Array<ReturnType<typeof activityEventSchema.parse>>;
   approvals: Array<ReturnType<typeof approvalRequestSchema.parse>>;
+  pluto: ReturnType<typeof plutoStateSchema.parse>;
 }
 
 export class RunnerBridge extends EventEmitter {
@@ -30,6 +33,17 @@ export class RunnerBridge extends EventEmitter {
     config: null,
     activity: [],
     approvals: [],
+    pluto: plutoStateSchema.parse({
+      available: false,
+      muted: false,
+      autoCommentaryEnabled: false,
+      commentaryIntervalMs: 30_000,
+      model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+      pending: false,
+      lastError: null,
+      activeMessage: null,
+      history: [],
+    }),
   };
 
   constructor(private readonly baseUrl: string) {
@@ -70,6 +84,9 @@ export class RunnerBridge extends EventEmitter {
         case "config":
           this.snapshot.config = agentCompanionConfigSchema.parse(message.data);
           break;
+        case "pluto":
+          this.snapshot.pluto = plutoStateSchema.parse(message.data);
+          break;
       }
       this.emit("snapshot", this.getSnapshot());
     });
@@ -91,11 +108,12 @@ export class RunnerBridge extends EventEmitter {
   }
 
   async refresh() {
-    const [status, config, activity, approvals] = await Promise.all([
+    const [status, config, activity, approvals, pluto] = await Promise.all([
       this.fetchJson("/internal/status"),
       this.fetchJson("/internal/config"),
       this.fetchJson(`/internal/activity?limit=${DEFAULT_ACTIVITY_LIMIT}`),
       this.fetchJson("/internal/approvals"),
+      this.fetchJson("/internal/pluto"),
     ]);
 
     this.snapshot = {
@@ -105,6 +123,7 @@ export class RunnerBridge extends EventEmitter {
       approvals: ((approvals as { approvals: unknown[] }).approvals ?? []).map((entry) =>
         approvalRequestSchema.parse(entry),
       ),
+      pluto: plutoStateSchema.parse(pluto),
     };
     this.emit("snapshot", this.getSnapshot());
   }
@@ -124,16 +143,33 @@ export class RunnerBridge extends EventEmitter {
 
   async decideApproval(decision: unknown) {
     const payload = approvalDecisionSchema.parse(decision);
-    const response = await fetch(new URL("/internal/approvals/decision", this.baseUrl), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const response = await this.postJson("/internal/approvals/decision", payload);
     if (!response.ok) {
       throw new Error(`Approval decision failed with ${response.status}`);
     }
     await this.refresh();
     return response.json();
+  }
+
+  async createPlutoCommentary(input: unknown) {
+    const payload = plutoCommentaryInputSchema.parse(input);
+    const response = await this.postJson("/internal/pluto/commentary", payload);
+    if (!response.ok) {
+      throw new Error(`Pluto commentary failed with ${response.status}`);
+    }
+    await this.refresh();
+    return await response.json();
+  }
+
+  async fetchPlutoAudio(messageId: string) {
+    const response = await fetch(new URL(`/internal/pluto/audio/${encodeURIComponent(messageId)}`, this.baseUrl));
+    if (!response.ok) {
+      throw new Error(`Pluto audio request failed with ${response.status}`);
+    }
+    return {
+      contentType: response.headers.get("content-type") ?? "audio/wav",
+      buffer: Buffer.from(await response.arrayBuffer()),
+    };
   }
 
   private async fetchJson(pathname: string) {
@@ -142,6 +178,14 @@ export class RunnerBridge extends EventEmitter {
       throw new Error(`Runner bridge request failed: ${pathname} (${response.status})`);
     }
     return await response.json();
+  }
+
+  private postJson(pathname: string, payload: unknown) {
+    return fetch(new URL(pathname, this.baseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
   }
 
   private scheduleReconnect() {

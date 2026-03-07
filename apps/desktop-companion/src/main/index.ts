@@ -1,10 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CursorTracker } from "./cursor-tracker.js";
 import { loadDesktopEnv } from "./env.js";
+import { shouldOverlayIgnoreMouseEvents } from "./overlay-hit-test.js";
+import { PlutoOrchestrator } from "./pluto-orchestrator.js";
 import { RunnerBridge } from "./runner-bridge.js";
 
 import { createDesktopServer } from "./server.js";
@@ -15,6 +17,7 @@ const env = loadDesktopEnv();
 const desktopToken = randomUUID();
 const cursorTracker = new CursorTracker(() => overlayWindow?.getBounds() ?? null);
 const runnerBridge = new RunnerBridge(`http://127.0.0.1:${env.LOCAL_RUNNER_PORT}`);
+const plutoOrchestrator = new PlutoOrchestrator(runnerBridge, capturePrimaryDisplayScreenshot);
 
 const tunnelManager = new TunnelManager(env.CLOUDFLARED_BIN, env.CLOUDFLARED_CONFIG_PATH);
 const userStore = new UserStore(env.USER_STORE_PATH);
@@ -29,8 +32,34 @@ let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let isQuitting = false;
 const debugLogPath = path.join(process.cwd(), "tmp", "desktop-main.log");
+const COMPACT_OVERLAY_BOUNDS = {
+  width: 248,
+  height: 248,
+  marginRight: 18,
+  marginBottom: 18,
+};
+const EXPANDED_OVERLAY_BOUNDS = {
+  width: 432,
+  height: 480,
+  marginRight: 16,
+  marginBottom: 16,
+};
 
 fs.mkdirSync(path.dirname(debugLogPath), { recursive: true });
+
+ipcMain.on("agent-companion:set-ignore-mouse-events", (event, ignore) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) {
+    win.setIgnoreMouseEvents(ignore, { forward: true });
+  }
+});
+
+ipcMain.handle("agent-companion:show-dashboard", () => {
+  mainWindow?.show();
+  mainWindow?.focus();
+  app.focus({ steal: true });
+  return true;
+});
 
 ipcMain.handle("agent-companion:select-directory", async () => {
   const result = mainWindow
@@ -75,6 +104,7 @@ app.on("activate", () => {
 app.on("before-quit", () => {
   isQuitting = true;
   cursorTracker.stop();
+  plutoOrchestrator.stop();
   tunnelManager.stop();
   debugLog("app:before-quit");
 });
@@ -91,6 +121,7 @@ async function bootstrap() {
     }
     await runnerBridge.connect();
     debugLog("boot:runner-connected", runnerBridge.getSnapshot().status);
+    plutoOrchestrator.start();
     await desktopServer.listen();
     debugLog("boot:desktop-server-listening", { port: env.DESKTOP_PORT });
     createWindows();
@@ -154,8 +185,8 @@ function createWindows() {
   });
 
   overlayWindow = new BrowserWindow({
-    width: 432,
-    height: 480,
+    width: COMPACT_OVERLAY_BOUNDS.width,
+    height: COMPACT_OVERLAY_BOUNDS.height,
     frame: false,
     transparent: true,
     backgroundColor: "#00000000",
@@ -172,11 +203,12 @@ function createWindows() {
     },
   });
   debugLog("windows:overlay-created", { windowCount: BrowserWindow.getAllWindows().length });
-  const workArea = screen.getPrimaryDisplay().workArea;
-  overlayWindow.setPosition(workArea.x + workArea.width - 448, workArea.y + workArea.height - 496);
+  updateOverlayWindowState();
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
   overlayWindow.webContents.on("did-finish-load", () => {
     debugLog("windows:overlay-did-finish-load", { url: overlayWindow?.webContents.getURL() });
+    updateOverlayWindowState();
     overlayWindow?.show();
   });
   overlayWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
@@ -189,6 +221,7 @@ function createWindows() {
   void overlayWindow.loadURL(`http://127.0.0.1:${env.DESKTOP_PORT}/overlay?desktopToken=${desktopToken}`);
   overlayWindow.once("ready-to-show", () => {
     debugLog("windows:overlay-ready-to-show");
+    updateOverlayWindowState();
     overlayWindow?.show();
   });
   overlayWindow.on("close", (event) => {
@@ -269,10 +302,78 @@ function createTrayIcon() {
 
 function wireApprovals() {
   runnerBridge.on("snapshot", () => {
-    const approvals = runnerBridge.getSnapshot().approvals;
+    const snapshot = runnerBridge.getSnapshot();
+    const approvals = snapshot.approvals;
+    updateOverlayWindowState(snapshot);
+    updateOverlayMouseMode(snapshot);
     if (approvals.length > 0) {
       overlayWindow?.show();
       overlayWindow?.moveTop();
     }
   });
+
+  cursorTracker.on("status", () => {
+    updateOverlayMouseMode();
+  });
+}
+
+function updateOverlayWindowState(snapshot = runnerBridge.getSnapshot()) {
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    return;
+  }
+
+  const hasBubble =
+    snapshot.approvals.length > 0 ||
+    snapshot.pluto.activeMessage !== null;
+  const bounds = hasBubble
+    ? EXPANDED_OVERLAY_BOUNDS
+    : COMPACT_OVERLAY_BOUNDS;
+  const workArea = screen.getPrimaryDisplay().workArea;
+
+  overlayWindow.setBounds({
+    x: workArea.x + workArea.width - bounds.width - bounds.marginRight,
+    y: workArea.y + workArea.height - bounds.height - bounds.marginBottom,
+    width: bounds.width,
+    height: bounds.height,
+  });
+
+  updateOverlayMouseMode(snapshot);
+}
+
+function updateOverlayMouseMode(snapshot = runnerBridge.getSnapshot()) {
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    return;
+  }
+
+  const bounds = overlayWindow.getBounds();
+  const cursorPoint = screen.getCursorScreenPoint();
+  const ignoreMouseEvents = shouldOverlayIgnoreMouseEvents({
+    bounds,
+    cursorPoint,
+    hasApprovalBubble: snapshot.approvals.length > 0,
+  });
+
+  overlayWindow.setIgnoreMouseEvents(ignoreMouseEvents, { forward: true });
+}
+
+async function capturePrimaryDisplayScreenshot() {
+  const primaryDisplayId = String(screen.getPrimaryDisplay().id);
+  const sources = await desktopCapturer.getSources({
+    types: ["screen"],
+    thumbnailSize: {
+      width: 1280,
+      height: 720,
+    },
+  });
+  const source =
+    sources.find((entry) => entry.display_id === primaryDisplayId) ??
+    sources.find((entry) => entry.thumbnail && !entry.thumbnail.isEmpty());
+  if (!source || source.thumbnail.isEmpty()) {
+    return null;
+  }
+
+  return {
+    mimeType: "image/jpeg",
+    base64: source.thumbnail.toJPEG(75).toString("base64"),
+  };
 }

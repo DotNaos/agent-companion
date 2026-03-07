@@ -413,6 +413,34 @@ describe("RunnerState", () => {
       ruleId: "full-access",
     });
   });
+
+  it("queues a Pluto secretary message for remote agents", async () => {
+    const ctx = createContext();
+
+    const result = await ctx.state.handleRelayRequest({
+      requestId: "pluto-1",
+      toolName: "notify_pluto",
+      payload: {
+        title: "Build update",
+        message: "Sag dem User bitte kurz, dass der Fix fertig ist und Tests grün sind.",
+        context:
+          "Der Remote Agent hat den Fehler in der Overlay-Logik behoben, die relevanten Tests ausgeführt und alles erfolgreich validiert.",
+        delivery: "summarize",
+        tone: "encouraging",
+      },
+      actor: actor(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({
+      delivery: "summarize",
+      audioAvailable: false,
+    });
+    expect(ctx.state.getPlutoState().activeMessage).toMatchObject({
+      title: "Build update",
+      source: "remote-agent",
+    });
+  });
 });
 
 function createContext() {
@@ -422,11 +450,15 @@ function createContext() {
     REMOTE_SERVER_URL: "http://127.0.0.1:8787",
     RUNNER_TOKEN: "runner-token",
     RUNNER_ID: "runner-1",
+    GEMINI_API_KEY: "",
+    PLUTO_MODEL: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+    PLUTO_VOICE_NAME: "Achird",
     LOCAL_RUNNER_PORT: 4317,
     DESKTOP_SERVER_PORT: 4318,
     CONFIG_PATH: path.join(dir, "config.json"),
     TODO_STORE_PATH: path.join(dir, "todos.json"),
     ACTIVITY_LOG_PATH: path.join(dir, "activity.log"),
+    PLUTO_AUDIO_DIR: path.join(dir, "pluto-audio"),
     DEFAULT_ADMIN_EMAIL: "admin@example.com",
     DEFAULT_ALLOWED_ORIGINS: "https://admin.example.com",
     DEFAULT_GOOGLE_CLIENT_IDS: "client-id",

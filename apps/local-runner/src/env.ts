@@ -1,24 +1,28 @@
+import {
+    DEFAULT_COMMAND_TIMEOUT_MS,
+    DEFAULT_DESKTOP_SERVER_PORT,
+    DEFAULT_LOCAL_RUNNER_PORT,
+    DEFAULT_OUTPUT_LIMIT_BYTES,
+} from "@agent-companion/shared";
+import { parse as parseDotenv } from "dotenv";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parse as parseDotenv } from "dotenv";
 import { z } from "zod";
-import {
-  DEFAULT_COMMAND_TIMEOUT_MS,
-  DEFAULT_DESKTOP_SERVER_PORT,
-  DEFAULT_LOCAL_RUNNER_PORT,
-  DEFAULT_OUTPUT_LIMIT_BYTES,
-} from "@agent-companion/shared";
 
 const envSchema = z.object({
   REMOTE_SERVER_URL: z.string().url().default("http://127.0.0.1:8787"),
   RUNNER_TOKEN: z.string().min(1).default("change-me-runner-token"),
   RUNNER_ID: z.string().min(1).default(os.hostname()),
+  GEMINI_API_KEY: z.string().default(""),
+  PLUTO_MODEL: z.string().min(1).default("models/gemini-2.5-flash-native-audio-preview-12-2025"),
+  PLUTO_VOICE_NAME: z.string().min(1).default("Achird"),
   LOCAL_RUNNER_PORT: z.coerce.number().int().positive().default(DEFAULT_LOCAL_RUNNER_PORT),
   DESKTOP_SERVER_PORT: z.coerce.number().int().positive().default(DEFAULT_DESKTOP_SERVER_PORT),
   CONFIG_PATH: z.string().default(path.join(os.homedir(), ".agent-companion", "config.json")),
   TODO_STORE_PATH: z.string().default(path.join(os.homedir(), ".agent-companion", "todos.json")),
   ACTIVITY_LOG_PATH: z.string().default(path.join(os.homedir(), ".agent-companion", "activity.log")),
+  PLUTO_AUDIO_DIR: z.string().default(path.join(os.homedir(), ".agent-companion", "pluto-audio")),
   DEFAULT_ADMIN_EMAIL: z.string().email().default("admin@example.com"),
   DEFAULT_ALLOWED_ORIGINS: z.string().default(""),
   DEFAULT_GOOGLE_CLIENT_IDS: z.string().default(""),

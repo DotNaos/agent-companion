@@ -61,10 +61,10 @@ export class CursorTracker extends EventEmitter {
     // zur Maus. 350 Pixel wirken gut, um nicht zu ruckartig ans Maximum zu springen.
     const LOOK_RADIUS = 350;
     const distRatio = Math.min(distance / LOOK_RADIUS, 1);
-    
+
     let clampedX = 0;
     let clampedY = 0;
-    
+
     if (distance > 0) {
       const angle = Math.atan2(dy, dx);
       clampedX = Math.cos(angle) * distRatio;

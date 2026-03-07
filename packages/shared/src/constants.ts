@@ -23,6 +23,7 @@ export const TOOL_NAMES = [
   "create_todo_list",
   "update_todo_item",
   "list_todo_items",
+  "notify_pluto",
 ] as const;
 
 export const SENSITIVE_TOOLS = new Set([

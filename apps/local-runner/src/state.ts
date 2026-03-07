@@ -15,6 +15,9 @@ import {
     listDirectoryInputSchema,
     listTodoItemsInputSchema,
     normalizeAbsolutePath,
+    notifyPlutoInputSchema,
+    plutoCommentaryInputSchema,
+    plutoStateSchema,
     readFileInputSchema,
     relayRequestSchema,
     requiresApproval,
@@ -34,6 +37,7 @@ import {
     type ApprovalDecision,
     type ApprovalRequest,
     type Capability,
+    type PlutoMessage,
     type RelayRequest,
     type ToolName,
 } from "@agent-companion/shared";
@@ -43,6 +47,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { RunnerEnv } from "./env.js";
+import { PlutoService } from "./pluto.js";
 import { ProcessManager } from "./process-manager.js";
 
 const todoStoreSchema = z.object({
@@ -83,14 +88,20 @@ export class RunnerState {
   readonly processManager: ProcessManager;
   readonly configStore: FileBackedStore<AgentCompanionConfig>;
   readonly todoStore: FileBackedStore<z.infer<typeof todoStoreSchema>>;
+  readonly plutoService: PlutoService;
   private readonly recentActivity: ActivityEvent[] = [];
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly approvalWaiters = new Map<string, ApprovalWaiter[]>();
   private readonly approvedGrantKeys = new Set<string>();
+  private activePlutoMessage: PlutoMessage | null = null;
+  private readonly plutoHistory: PlutoMessage[] = [];
+  private plutoPending = false;
+  private plutoLastError: string | null = null;
   private connectedToRemote = false;
   private lastSeenAt: string | null = null;
 
   constructor(private readonly env: RunnerEnv) {
+    this.plutoService = new PlutoService(env);
     this.configStore = new FileBackedStore(
       env.CONFIG_PATH,
       agentCompanionConfigSchema,
@@ -98,6 +109,11 @@ export class RunnerState {
         version: 1,
         projectsRoot: null,
         mcpAccessMode: "default",
+        pluto: {
+          muted: false,
+          autoCommentaryEnabled: false,
+          commentaryIntervalMs: 30_000,
+        },
         allowedPaths: [],
         tasks: [],
         devServerTasks: [],
@@ -159,10 +175,58 @@ export class RunnerState {
     return this.configStore.read();
   }
 
+  getPlutoState() {
+    const config = this.getConfig();
+    return plutoStateSchema.parse({
+      available: this.plutoService.isAvailable(),
+      muted: config.pluto.muted,
+      autoCommentaryEnabled: config.pluto.autoCommentaryEnabled,
+      commentaryIntervalMs: config.pluto.commentaryIntervalMs,
+      model: this.plutoService.getModel(),
+      pending: this.plutoPending,
+      lastError: this.plutoLastError,
+      activeMessage: this.getVisiblePlutoMessage(),
+      history: this.plutoHistory.filter((entry) => !this.isExpired(entry)).slice(0, 10),
+    });
+  }
+
+  getPlutoAudio(messageId: string) {
+    return this.plutoService.readAudio(messageId);
+  }
+
   updateConfig(next: AgentCompanionConfig) {
     const value = this.configStore.write(agentCompanionConfigSchema.parse(next));
     this.events.emit("config", value);
+    this.emitPluto();
     return value;
+  }
+
+  async createPlutoCommentary(input: unknown) {
+    const parsed = plutoCommentaryInputSchema.parse(input);
+    const config = this.getConfig();
+    if (!this.plutoService.isAvailable()) {
+      throw new AppError("PLUTO_UNAVAILABLE", "Gemini is not configured for Pluto", 503);
+    }
+
+    this.setPlutoPending(true);
+    try {
+      const result = await this.plutoService.createAutonomousCommentary(parsed, {
+        muted: config.pluto.muted,
+      });
+      this.publishPlutoMessage(result.message, "Autonomous Pluto commentary generated");
+      return {
+        messageId: result.message.id,
+        text: result.message.text,
+        delivery: result.message.delivery,
+        audioAvailable: result.message.audioAvailable,
+        usedFallback: result.usedFallback,
+      };
+    } catch (error) {
+      this.setPlutoError(error instanceof Error ? error.message : "Pluto commentary failed");
+      throw error;
+    } finally {
+      this.setPlutoPending(false);
+    }
   }
 
   recordAuth(message: string, success: boolean, data?: Record<string, unknown>) {
@@ -268,6 +332,50 @@ export class RunnerState {
 
   private emitStatus() {
     this.events.emit("status", this.getStatus());
+  }
+
+  private emitPluto() {
+    this.events.emit("pluto", this.getPlutoState());
+  }
+
+  private setPlutoPending(next: boolean) {
+    this.plutoPending = next;
+    this.emitPluto();
+  }
+
+  private setPlutoError(message: string | null) {
+    this.plutoLastError = message;
+    this.emitPluto();
+  }
+
+  private publishPlutoMessage(message: PlutoMessage, activityMessage: string) {
+    this.activePlutoMessage = message;
+    this.plutoHistory.unshift(message);
+    if (this.plutoHistory.length > 20) {
+      this.plutoHistory.length = 20;
+    }
+    this.plutoLastError = null;
+    this.logActivity("pluto", activityMessage, {
+      messageId: message.id,
+      source: message.source,
+      delivery: message.delivery,
+      title: message.title,
+    });
+    this.emitPluto();
+  }
+
+  private getVisiblePlutoMessage() {
+    if (!this.activePlutoMessage) {
+      return null;
+    }
+    return this.isExpired(this.activePlutoMessage) ? null : this.activePlutoMessage;
+  }
+
+  private isExpired(message: PlutoMessage) {
+    if (!message.expiresAt) {
+      return false;
+    }
+    return new Date(message.expiresAt).getTime() <= Date.now();
   }
 
   private consumeApprovedGrant(grantKey: string) {
@@ -521,6 +629,31 @@ export class RunnerState {
         return {
           lists: input.listId ? store.lists.filter((entry) => entry.id === input.listId) : store.lists,
         };
+      }
+
+      case "notify_pluto": {
+        const input = notifyPlutoInputSchema.parse(payload);
+        const config = this.getConfig();
+        this.setPlutoPending(true);
+        try {
+          const result = await this.plutoService.notify(input, {
+            muted: config.pluto.muted,
+            actorEmail,
+          });
+          this.publishPlutoMessage(result.message, `Pluto message queued by ${actorEmail}`);
+          return {
+            messageId: result.message.id,
+            text: result.message.text,
+            delivery: result.message.delivery,
+            audioAvailable: result.message.audioAvailable,
+            usedFallback: result.usedFallback,
+          };
+        } catch (error) {
+          this.setPlutoError(error instanceof Error ? error.message : "Pluto notify failed");
+          throw error;
+        } finally {
+          this.setPlutoPending(false);
+        }
       }
     }
   }

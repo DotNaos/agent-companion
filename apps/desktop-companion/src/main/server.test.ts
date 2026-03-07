@@ -108,7 +108,12 @@ function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
       allowedGoogleClientIds: [],
       allowedOrigins,
     },
-  } satisfies AgentCompanionConfig;
+    pluto: {
+      muted: false,
+      autoCommentaryEnabled: false,
+      commentaryIntervalMs: 30000,
+    },
+  } as AgentCompanionConfig;
 
   class FakeRunnerBridge extends EventEmitter {
     getSnapshot() {
@@ -122,6 +127,17 @@ function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
         config,
         activity: [],
         approvals: [],
+          pluto: {
+            available: false,
+            muted: false,
+            autoCommentaryEnabled: false,
+            commentaryIntervalMs: 30000,
+            model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+            pending: false,
+            lastError: null,
+            activeMessage: null,
+            history: [],
+          },
       };
     }
 

@@ -2,6 +2,8 @@ import type {
     ActivityEvent,
     AgentCompanionConfig,
     ApprovalRequest,
+    PlutoMessage,
+    PlutoState,
     RunnerStatus,
 } from '@agent-companion/shared';
 import {
@@ -45,6 +47,7 @@ type Bootstrap = {
         config: AgentCompanionConfig | null;
         activity: ActivityEvent[];
         approvals: ApprovalRequest[];
+        pluto: PlutoState;
     };
     desktop: {
         runnerRunning: boolean;
@@ -71,6 +74,8 @@ declare global {
         agentCompanion?: {
             platform: string;
             selectDirectory?: () => Promise<string | null>;
+            setIgnoreMouseEvents?: (ignore: boolean) => void;
+            showDashboard?: () => Promise<boolean>;
         };
     }
 }
@@ -461,6 +466,84 @@ export function App() {
                                         No logs recorded
                                     </div>
                                 )}
+                            </CardContent>
+                        </Card>
+
+                        <Card className="md:col-span-3 bg-white/5 border-white/10">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="text-lg">Pluto</CardTitle>
+                                <CardDescription>
+                                    Local secretary mode with Gemini-based
+                                    commentary and optional spoken updates.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                                <div className="flex flex-wrap gap-2">
+                                    <Badge
+                                        variant="secondary"
+                                        className="bg-black/40 text-slate-300 border-white/10">
+                                        {bootstrap?.runner.pluto.available
+                                            ? 'Gemini ready'
+                                            : 'Gemini offline'}
+                                    </Badge>
+                                    <Badge
+                                        variant="secondary"
+                                        className="bg-black/40 text-slate-300 border-white/10">
+                                        {draftConfig?.pluto.muted
+                                            ? 'Muted'
+                                            : 'Voice on'}
+                                    </Badge>
+                                    <Badge
+                                        variant="secondary"
+                                        className="bg-black/40 text-slate-300 border-white/10">
+                                        {draftConfig?.pluto
+                                            .autoCommentaryEnabled
+                                            ? `Auto every ${Math.round((draftConfig.pluto.commentaryIntervalMs ?? 30_000) / 1000)}s`
+                                            : 'Auto commentary off'}
+                                    </Badge>
+                                </div>
+                                <div className="flex flex-wrap gap-3">
+                                    <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={() =>
+                                            updateDraftConfig((current) => ({
+                                                ...current,
+                                                pluto: {
+                                                    ...current.pluto,
+                                                    muted: !current.pluto.muted,
+                                                },
+                                            }))
+                                        }>
+                                        {draftConfig?.pluto.muted
+                                            ? 'Unmute Pluto'
+                                            : 'Mute Pluto'}
+                                    </Button>
+                                    <Button
+                                        variant={
+                                            draftConfig?.pluto
+                                                .autoCommentaryEnabled
+                                                ? 'outline'
+                                                : 'default'
+                                        }
+                                        size="sm"
+                                        onClick={() =>
+                                            updateDraftConfig((current) => ({
+                                                ...current,
+                                                pluto: {
+                                                    ...current.pluto,
+                                                    autoCommentaryEnabled:
+                                                        !current.pluto
+                                                            .autoCommentaryEnabled,
+                                                },
+                                            }))
+                                        }>
+                                        {draftConfig?.pluto
+                                            .autoCommentaryEnabled
+                                            ? 'Pause commentary'
+                                            : 'Enable commentary'}
+                                    </Button>
+                                </div>
                             </CardContent>
                         </Card>
                     </div>
@@ -1314,10 +1397,13 @@ function OverlayView({
     const [frameTime, setFrameTime] = useState(() => Date.now());
     const approvalCount = bootstrap?.runner.approvals.length ?? 0;
     const primaryApproval = bootstrap?.runner.approvals[0] ?? null;
+    const activePlutoMessage = getVisiblePlutoMessage(
+        bootstrap?.runner.pluto.activeMessage ?? null,
+    );
     const runnerRunning = bootstrap?.desktop.runnerRunning ?? false;
     const isConnected = bootstrap?.runner.status.connectedToRemote ?? false;
-    const tunnelRunning = bootstrap?.desktop.tunnelRunning ?? false;
     const runningProcesses = bootstrap?.runner.status.runningProcesses ?? 0;
+    const plutoPending = bootstrap?.runner.pluto.pending ?? false;
     const latestActivity = bootstrap?.runner.activity.at(-1) ?? null;
     const latestTimestamp = latestActivity
         ? new Date(latestActivity.timestamp).getTime()
@@ -1339,20 +1425,73 @@ function OverlayView({
             ? 'offline'
             : approvalCount > 0
               ? 'alert'
-              : runningProcesses > 0 || isRecentlyActive
+              : runningProcesses > 0 || isRecentlyActive || plutoPending
                 ? 'working'
                 : 'idle';
     const isProcessing =
         runningProcesses > 0 ||
+        plutoPending ||
         (latestActivity?.type === 'tool_call' && recentAgeMs < 1_600);
+    const lastPlayedMessageRef = useRef<string | null>(null);
 
     useEffect(() => {
-        const intervalId = window.setInterval(
+        const intervalId = globalThis.setInterval(
             () => setFrameTime(Date.now()),
             80,
         );
-        return () => window.clearInterval(intervalId);
+        return () => globalThis.clearInterval(intervalId);
     }, []);
+
+    useEffect(() => {
+        if (
+            !activePlutoMessage ||
+            !activePlutoMessage.audioAvailable ||
+            bootstrap?.runner.pluto.muted ||
+            lastPlayedMessageRef.current === activePlutoMessage.id
+        ) {
+            return;
+        }
+
+        let objectUrl: string | null = null;
+        let cancelled = false;
+
+        void (async () => {
+            const response = await fetch(
+                `/api/desktop/pluto/audio/${encodeURIComponent(activePlutoMessage.id)}`,
+                {
+                    headers: desktopToken
+                        ? { 'x-desktop-token': desktopToken }
+                        : undefined,
+                },
+            ).catch(() => null);
+
+            if (!response?.ok || cancelled) {
+                return;
+            }
+
+            const blob = await response.blob();
+            if (cancelled) {
+                return;
+            }
+
+            objectUrl = URL.createObjectURL(blob);
+            const audio = new Audio(objectUrl);
+            await audio.play().catch(() => undefined);
+            lastPlayedMessageRef.current = activePlutoMessage.id;
+        })();
+
+        return () => {
+            cancelled = true;
+            if (objectUrl) {
+                URL.revokeObjectURL(objectUrl);
+            }
+        };
+    }, [
+        activePlutoMessage?.audioAvailable,
+        activePlutoMessage?.id,
+        bootstrap?.runner.pluto.muted,
+        desktopToken,
+    ]);
 
     const phase = frameTime / 1000;
     const curiousCycle = (Math.sin(phase * 0.72) + 1) / 2;
@@ -1419,15 +1558,31 @@ function OverlayView({
                             </button>
                         </div>
                     </div>
+                ) : activePlutoMessage ? (
+                    <div className="pet-bubble passive">
+                        <div className="pet-bubble-chip">
+                            {describePlutoChip(activePlutoMessage)}
+                        </div>
+                        <strong>{activePlutoMessage.title ?? 'Pluto'}</strong>
+                        <p>{activePlutoMessage.text}</p>
+                    </div>
                 ) : null}
-                <PlutoAvatar
-                    avatarState={avatarState}
-                    cursor={cursor}
-                    isProcessing={isProcessing}
-                    curious={curious}
-                    phase={phase}
-                    blink={buildBlink(phase, avatarState, curious)}
-                />
+                <button
+                    type="button"
+                    className="pluto-hit-target"
+                    aria-label="Open Pluto dashboard"
+                    onClick={() =>
+                        void globalThis.window.agentCompanion?.showDashboard?.()
+                    }>
+                    <PlutoAvatar
+                        avatarState={avatarState}
+                        cursor={cursor}
+                        isProcessing={isProcessing}
+                        curious={curious}
+                        phase={phase}
+                        blink={buildBlink(phase, avatarState, curious)}
+                    />
+                </button>
                 {avatarState === 'offline' ? (
                     <div className="pet-sleep" aria-hidden="true">
                         <span>Z</span>
@@ -1495,6 +1650,23 @@ function formatApprovalPreview(toolName: string, payload: unknown) {
 
     const raw = JSON.stringify(payload);
     return raw && raw !== '{}' ? raw : 'Approval requested';
+}
+
+function getVisiblePlutoMessage(message: PlutoMessage | null) {
+    if (!message?.expiresAt) {
+        return message;
+    }
+    return new Date(message.expiresAt).getTime() > Date.now() ? message : null;
+}
+
+function describePlutoChip(message: PlutoMessage) {
+    if (message.source === 'autonomous') {
+        return message.audioAvailable ? 'pluto live' : 'pluto note';
+    }
+    if (message.delivery === 'summarize') {
+        return 'secretary mode';
+    }
+    return message.audioAvailable ? 'remote relay' : 'message relay';
 }
 
 function LoginView() {

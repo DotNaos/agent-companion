@@ -16,6 +16,49 @@ export const capabilityFlagsSchema = z.object({
 
 export const toolNameSchema = z.enum(TOOL_NAMES);
 
+export const plutoToneSchema = z.enum([
+  "encouraging",
+  "humorous",
+  "neutral",
+  "urgent",
+]);
+
+export const plutoDeliverySchema = z.enum([
+  "bubble",
+  "speak",
+  "summarize",
+]);
+
+export const plutoConfigSchema = z.object({
+  muted: z.boolean().default(false),
+  autoCommentaryEnabled: z.boolean().default(false),
+  commentaryIntervalMs: z.number().int().min(10_000).max(300_000).default(30_000),
+});
+
+export const plutoMessageSchema = z.object({
+  id: z.string().min(1),
+  source: z.enum(["autonomous", "remote-agent", "system"]),
+  delivery: plutoDeliverySchema,
+  tone: plutoToneSchema,
+  title: z.string().max(120).nullable().default(null),
+  text: z.string().min(1).max(8_000),
+  createdAt: z.string(),
+  expiresAt: z.string().nullable().default(null),
+  audioAvailable: z.boolean().default(false),
+});
+
+export const plutoStateSchema = z.object({
+  available: z.boolean().default(false),
+  muted: z.boolean().default(false),
+  autoCommentaryEnabled: z.boolean().default(false),
+  commentaryIntervalMs: z.number().int().min(10_000).max(300_000).default(30_000),
+  model: z.string().min(1),
+  pending: z.boolean().default(false),
+  lastError: z.string().nullable().default(null),
+  activeMessage: plutoMessageSchema.nullable().default(null),
+  history: z.array(plutoMessageSchema).default([]),
+});
+
 export const allowedPathSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -60,6 +103,7 @@ export const approvalPolicySchema = z.object({
       create_todo_list: z.boolean().optional(),
       update_todo_item: z.boolean().optional(),
       list_todo_items: z.boolean().optional(),
+      notify_pluto: z.boolean().optional(),
     })
     .default({}),
   alwaysRequireApprovalForSensitiveTools: z.boolean().default(true),
@@ -75,6 +119,11 @@ export const agentCompanionConfigSchema = z.object({
   version: z.literal(1).default(1),
   projectsRoot: z.string().nullable().default(null),
   mcpAccessMode: mcpAccessModeSchema.default("default"),
+  pluto: plutoConfigSchema.default({
+    muted: false,
+    autoCommentaryEnabled: false,
+    commentaryIntervalMs: 30_000,
+  }),
   allowedPaths: z.array(allowedPathSchema).default([]),
   tasks: z.array(taskDefinitionSchema).default([]),
   devServerTasks: z.array(taskDefinitionSchema).default([]),
@@ -272,6 +321,30 @@ export const listTodoItemsOutputSchema = z.object({
   ),
 });
 
+export const notifyPlutoInputSchema = z.object({
+  message: z.string().min(1).max(4_000),
+  context: z.string().max(20_000).optional(),
+  title: z.string().max(120).optional(),
+  delivery: plutoDeliverySchema.default("bubble"),
+  tone: plutoToneSchema.default("encouraging"),
+});
+
+export const notifyPlutoOutputSchema = z.object({
+  messageId: z.string().min(1),
+  text: z.string().min(1),
+  delivery: plutoDeliverySchema,
+  audioAvailable: z.boolean(),
+  usedFallback: z.boolean().default(false),
+});
+
+export const plutoCommentaryInputSchema = z.object({
+  screenshotBase64: z.string().min(1),
+  mimeType: z.string().min(1).default("image/png"),
+  contextHint: z.string().max(1_000).optional(),
+});
+
+export const plutoCommentaryOutputSchema = notifyPlutoOutputSchema;
+
 export const toolInputSchemas = {
   health_check: healthCheckInputSchema,
   list_projects: listProjectsInputSchema,
@@ -288,6 +361,7 @@ export const toolInputSchemas = {
   create_todo_list: createTodoListInputSchema,
   update_todo_item: updateTodoItemInputSchema,
   list_todo_items: listTodoItemsInputSchema,
+  notify_pluto: notifyPlutoInputSchema,
 } as const;
 
 export const toolOutputSchemas = {
@@ -306,6 +380,7 @@ export const toolOutputSchemas = {
   create_todo_list: createTodoListOutputSchema,
   update_todo_item: updateTodoItemOutputSchema,
   list_todo_items: listTodoItemsOutputSchema,
+  notify_pluto: notifyPlutoOutputSchema,
 } as const;
 
 export const toolResultEnvelopeSchema = z.object({
@@ -359,6 +434,7 @@ export const activityEventSchema = z.object({
     "auth",
     "tool_call",
     "approval",
+    "pluto",
     "process",
     "file_write",
     "command",
@@ -380,6 +456,11 @@ export type Capability = z.infer<typeof capabilityEnum>;
 export type CapabilityFlags = z.infer<typeof capabilityFlagsSchema>;
 export type MCPAccessMode = z.infer<typeof mcpAccessModeSchema>;
 export type ToolName = z.infer<typeof toolNameSchema>;
+export type PlutoTone = z.infer<typeof plutoToneSchema>;
+export type PlutoDelivery = z.infer<typeof plutoDeliverySchema>;
+export type PlutoConfig = z.infer<typeof plutoConfigSchema>;
+export type PlutoMessage = z.infer<typeof plutoMessageSchema>;
+export type PlutoState = z.infer<typeof plutoStateSchema>;
 export type AllowedPath = z.infer<typeof allowedPathSchema>;
 export type TaskDefinition = z.infer<typeof taskDefinitionSchema>;
 export type RunCommandRule = z.infer<typeof runCommandRuleSchema>;
@@ -391,3 +472,7 @@ export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
 export type ActivityEvent = z.infer<typeof activityEventSchema>;
 export type RunnerStatus = z.infer<typeof runnerStatusSchema>;
+export type NotifyPlutoInput = z.infer<typeof notifyPlutoInputSchema>;
+export type NotifyPlutoOutput = z.infer<typeof notifyPlutoOutputSchema>;
+export type PlutoCommentaryInput = z.infer<typeof plutoCommentaryInputSchema>;
+export type PlutoCommentaryOutput = z.infer<typeof plutoCommentaryOutputSchema>;
