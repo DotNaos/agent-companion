@@ -1,0 +1,16 @@
+[Unit]
+Description=agent-companion local runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/absolute/path/to/agent-companion
+Environment=REMOTE_SERVER_URL=https://mcp.example.com
+Environment=RUNNER_TOKEN=replace-me
+ExecStart=/usr/bin/pnpm --dir /absolute/path/to/agent-companion --filter @agent-companion/local-runner start
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
