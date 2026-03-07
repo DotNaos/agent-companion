@@ -1,0 +1,425 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import type { AgentCompanionConfig } from "@agent-companion/shared";
+import { RunnerState } from "./state.js";
+import type { RunnerEnv } from "./env.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+describe("RunnerState", () => {
+  it("rejects path traversal outside an allowed root", async () => {
+    const ctx = createContext();
+    const allowedRoot = path.join(ctx.dir, "workspace");
+    const secretFile = path.join(ctx.dir, "secret.txt");
+    fs.mkdirSync(allowedRoot, { recursive: true });
+    fs.writeFileSync(secretFile, "nope");
+    ctx.setConfig({
+      ...ctx.baseConfig,
+      allowedPaths: [manualPath("workspace", allowedRoot, { read: true })],
+    });
+
+    const resultPromise = ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "read_file",
+      payload: {
+        path: path.join(allowedRoot, "..", "secret.txt"),
+      },
+      actor: actor(),
+    });
+
+    await waitForApprovalQueue();
+    const [approval] = ctx.state.listApprovals();
+    expect(approval?.summary).toContain("read");
+    await ctx.state.applyApprovalDecision({ id: approval!.id, decision: "denied", remember: false });
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("APPROVAL_DENIED");
+    expect(result.error?.details).toMatchObject({ escalatedFrom: "PATH_NOT_ALLOWED" });
+  });
+
+  it("blocks run_command when the command is not on the allowlist", async () => {
+    const ctx = createContext();
+    const workspace = path.join(ctx.dir, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+    ctx.setConfig({
+      ...ctx.baseConfig,
+      allowedPaths: [manualPath("workspace", workspace, { "run-command": true })],
+      runCommandRules: [
+        {
+          id: "git-status",
+          label: "git status",
+          command: ["git", "status"],
+          approvalRequired: false,
+        },
+      ],
+    });
+
+    const resultPromise = ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "run_command",
+      payload: {
+        workingDirectory: workspace,
+        command: ["npm", "test"],
+      },
+      actor: actor(),
+    });
+
+    await waitForApprovalQueue();
+    const [approval] = ctx.state.listApprovals();
+    await ctx.state.applyApprovalDecision({ id: approval!.id, decision: "denied", remember: false });
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("APPROVAL_DENIED");
+    expect(result.error?.details).toMatchObject({ escalatedFrom: "COMMAND_NOT_ALLOWED" });
+  });
+
+  it("rejects invalid tool payloads before execution", async () => {
+    const ctx = createContext();
+
+    const result = await ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "read_file",
+      payload: {},
+      actor: actor(),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("INVALID_SCHEMA");
+  });
+
+  it("blocks approval-gated writes until the user approves them", async () => {
+    const ctx = createContext();
+    const workspace = path.join(ctx.dir, "workspace");
+    const filePath = path.join(workspace, "note.txt");
+    fs.mkdirSync(workspace, { recursive: true });
+    ctx.setConfig({
+      ...ctx.baseConfig,
+      allowedPaths: [manualPath("workspace", workspace, { write: true })],
+      approvalPolicy: {
+        toolApprovals: {
+          write_file: true,
+        },
+        alwaysRequireApprovalForSensitiveTools: false,
+      },
+    });
+
+    const resultPromise = ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "write_file",
+      payload: {
+        path: filePath,
+        content: "blocked",
+      },
+      actor: actor(),
+    });
+
+    expect(fs.existsSync(filePath)).toBe(false);
+    await waitForApprovalQueue();
+    expect(ctx.state.listApprovals()).toHaveLength(1);
+    await ctx.state.applyApprovalDecision({ id: ctx.state.listApprovals()[0]!.id, decision: "approved", remember: false });
+    const result = await resultPromise;
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(filePath, "utf8")).toBe("blocked");
+  });
+
+  it("blocks create_project attempts that try to escape the projects root", async () => {
+    const ctx = createContext();
+    const projectsRoot = path.join(ctx.dir, "projects");
+    fs.mkdirSync(projectsRoot, { recursive: true });
+    ctx.setConfig({
+      ...ctx.baseConfig,
+      projectsRoot,
+    });
+
+    const result = await ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "create_project",
+      payload: {
+        name: "../escape",
+      },
+      actor: actor(),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("INVALID_SCHEMA");
+  });
+
+  it("denies file access outside explicit whitelists by default", async () => {
+    const ctx = createContext();
+    const outside = path.join(ctx.dir, "outside.txt");
+    fs.writeFileSync(outside, "secret");
+
+    const resultPromise = ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "read_file",
+      payload: {
+        path: outside,
+      },
+      actor: actor(),
+    });
+
+    await waitForApprovalQueue();
+    const [approval] = ctx.state.listApprovals();
+    await ctx.state.applyApprovalDecision({ id: approval!.id, decision: "denied", remember: false });
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("APPROVAL_DENIED");
+    expect(result.error?.details).toMatchObject({ escalatedFrom: "PATH_NOT_ALLOWED" });
+  });
+
+  it("enforces per-path capability flags", async () => {
+    const ctx = createContext();
+    const workspace = path.join(ctx.dir, "workspace");
+    const filePath = path.join(workspace, "note.txt");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.writeFileSync(filePath, "hello");
+    ctx.setConfig({
+      ...ctx.baseConfig,
+      allowedPaths: [manualPath("workspace", workspace, { read: true })],
+    });
+
+    const readResult = await ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "read_file",
+      payload: { path: filePath },
+      actor: actor(),
+    });
+    const writeResultPromise = ctx.state.handleRelayRequest({
+      requestId: "2",
+      toolName: "write_file",
+      payload: { path: filePath, content: "new" },
+      actor: actor(),
+    });
+
+    await waitForApprovalQueue();
+    const [approval] = ctx.state.listApprovals();
+    await ctx.state.applyApprovalDecision({ id: approval!.id, decision: "denied", remember: false });
+    const writeResult = await writeResultPromise;
+
+    expect(readResult.ok).toBe(true);
+    expect(writeResult.ok).toBe(false);
+    expect(writeResult.error?.code).toBe("APPROVAL_DENIED");
+    expect(writeResult.error?.details).toMatchObject({ escalatedFrom: "CAPABILITY_DENIED" });
+  });
+
+  it("denies run_command by default when no whitelist exists", async () => {
+    const ctx = createContext();
+    const workspace = path.join(ctx.dir, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+    ctx.setConfig({
+      ...ctx.baseConfig,
+      allowedPaths: [manualPath("workspace", workspace, { "run-command": true })],
+      runCommandRules: [],
+    });
+
+    const resultPromise = ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "run_command",
+      payload: {
+        workingDirectory: workspace,
+        command: ["git", "status"],
+      },
+      actor: actor(),
+    });
+
+    await waitForApprovalQueue();
+    const [approval] = ctx.state.listApprovals();
+    await ctx.state.applyApprovalDecision({ id: approval!.id, decision: "denied", remember: false });
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("APPROVAL_DENIED");
+    expect(result.error?.details).toMatchObject({ escalatedFrom: "COMMAND_NOT_ALLOWED" });
+  });
+
+  it("denies run_command when the path lacks run-command permission", async () => {
+    const ctx = createContext();
+    const workspace = path.join(ctx.dir, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+    ctx.setConfig({
+      ...ctx.baseConfig,
+      allowedPaths: [manualPath("workspace", workspace, { read: true })],
+      runCommandRules: [
+        {
+          id: "git-status",
+          label: "git status",
+          command: ["git", "status"],
+          approvalRequired: false,
+        },
+      ],
+    });
+
+    const resultPromise = ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "run_command",
+      payload: {
+        workingDirectory: workspace,
+        command: ["git", "status"],
+      },
+      actor: actor(),
+    });
+
+    await waitForApprovalQueue();
+    const [approval] = ctx.state.listApprovals();
+    await ctx.state.applyApprovalDecision({ id: approval!.id, decision: "denied", remember: false });
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("APPROVAL_DENIED");
+    expect(result.error?.details).toMatchObject({ escalatedFrom: "CAPABILITY_DENIED" });
+  });
+
+  it("reads a safe file within an approved path", async () => {
+    const ctx = createContext();
+    const workspace = path.join(ctx.dir, "workspace");
+    const filePath = path.join(workspace, "hello.txt");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.writeFileSync(filePath, "hello world");
+    ctx.setConfig({
+      ...ctx.baseConfig,
+      allowedPaths: [manualPath("workspace", workspace, { read: true })],
+    });
+
+    const result = await ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "read_file",
+      payload: {
+        path: filePath,
+      },
+      actor: actor(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({
+      path: filePath,
+      content: "hello world",
+      truncated: false,
+    });
+  });
+
+  it("creates a project inside the configured projects root", async () => {
+    const ctx = createContext();
+    const projectsRoot = path.join(ctx.dir, "projects");
+    fs.mkdirSync(projectsRoot, { recursive: true });
+    ctx.setConfig({
+      ...ctx.baseConfig,
+      projectsRoot,
+    });
+
+    const result = await ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "create_project",
+      payload: {
+        name: "new-project",
+      },
+      actor: actor(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fs.existsSync(path.join(projectsRoot, "new-project"))).toBe(true);
+  });
+
+  it("inherits access for child paths under a manually allowed path", async () => {
+    const ctx = createContext();
+    const workspace = path.join(ctx.dir, "workspace");
+    const childDir = path.join(workspace, "nested");
+    const filePath = path.join(childDir, "child.txt");
+    fs.mkdirSync(childDir, { recursive: true });
+    fs.writeFileSync(filePath, "child");
+    ctx.setConfig({
+      ...ctx.baseConfig,
+      allowedPaths: [manualPath("workspace", workspace, { read: true })],
+    });
+
+    const result = await ctx.state.handleRelayRequest({
+      requestId: "1",
+      toolName: "read_file",
+      payload: {
+        path: filePath,
+      },
+      actor: actor(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({ content: "child" });
+  });
+});
+
+function createContext() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-companion-runner-"));
+  tempDirs.push(dir);
+  const env: RunnerEnv = {
+    REMOTE_SERVER_URL: "http://127.0.0.1:8787",
+    RUNNER_TOKEN: "runner-token",
+    RUNNER_ID: "runner-1",
+    LOCAL_RUNNER_PORT: 4317,
+    DESKTOP_SERVER_PORT: 4318,
+    CONFIG_PATH: path.join(dir, "config.json"),
+    TODO_STORE_PATH: path.join(dir, "todos.json"),
+    ACTIVITY_LOG_PATH: path.join(dir, "activity.log"),
+    DEFAULT_ADMIN_EMAIL: "admin@example.com",
+    DEFAULT_ALLOWED_ORIGINS: "https://admin.example.com",
+    DEFAULT_GOOGLE_CLIENT_IDS: "client-id",
+    DEFAULT_COMMAND_TIMEOUT_MS: 10_000,
+    DEFAULT_OUTPUT_LIMIT_BYTES: 10_000,
+  };
+  const state = new RunnerState(env);
+  const baseConfig = state.getConfig();
+  return {
+    dir,
+    env,
+    state,
+    baseConfig,
+    setConfig(config: AgentCompanionConfig) {
+      state.updateConfig(config);
+    },
+  };
+}
+
+function actor() {
+  return {
+    email: "admin@example.com",
+    subject: "admin-subject",
+  };
+}
+
+async function waitForApprovalQueue() {
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
+function manualPath(
+  label: string,
+  targetPath: string,
+  capabilities: Partial<AgentCompanionConfig["allowedPaths"][number]["capabilities"]>,
+): AgentCompanionConfig["allowedPaths"][number] {
+  return {
+    id: `${label}-id`,
+    label,
+    path: targetPath,
+    kind: "manual",
+    enabled: true,
+    capabilities: {
+      read: false,
+      write: false,
+      search: false,
+      list: false,
+      "execute-tasks": false,
+      "run-command": false,
+      ...capabilities,
+    },
+  };
+}

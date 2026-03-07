@@ -1,0 +1,9 @@
+tunnel: YOUR_TUNNEL_ID
+credentials-file: /Users/you/.cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+  - hostname: mcp.example.com
+    service: http://127.0.0.1:8787
+  - hostname: admin.example.com
+    service: http://127.0.0.1:4318
+  - service: http_status:404
