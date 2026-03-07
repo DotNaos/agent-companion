@@ -4,6 +4,8 @@ import type {
     ApprovalRequest,
     PlutoMessage,
     PlutoState,
+    PlutoVoiceSessionAttachOutput,
+    PlutoVoiceSessionCreateOutput,
     PlutoVoiceSessionSummary,
     RunnerStatus,
 } from '@agent-companion/shared';
@@ -20,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { PlutoAvatar, plutoAudioState } from './components/PlutoAvatar.js';
+import { PlutoVoiceSessionConsole } from './components/PlutoVoiceSessionConsole.js';
 import { Badge } from './components/ui/badge.js';
 import { Button, buttonVariants } from './components/ui/button.js';
 import {
@@ -125,6 +128,12 @@ export function App() {
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [plutoTriggerPending, setPlutoTriggerPending] = useState(false);
     const [plutoSessionActionPending, setPlutoSessionActionPending] = useState<
+        string | null
+    >(null);
+    const [localSessionClients, setLocalSessionClients] = useState<
+        Record<string, string>
+    >({});
+    const [activeVoiceSessionId, setActiveVoiceSessionId] = useState<
         string | null
     >(null);
     const [showSetupGuide, setShowSetupGuide] = useState(false);
@@ -242,6 +251,9 @@ export function App() {
     const activity = bootstrap?.runner.activity ?? [];
     const approvals = bootstrap?.runner.approvals ?? [];
     const plutoVoiceSessions = bootstrap?.runner.plutoVoiceSessions ?? [];
+    const activeVoiceSessionClientId = activeVoiceSessionId
+        ? localSessionClients[activeVoiceSessionId] ?? null
+        : null;
     const desktopBridge = globalThis.window?.agentCompanion;
     const canBrowseDirectories =
         typeof desktopBridge?.selectDirectory === 'function';
@@ -481,8 +493,9 @@ export function App() {
                                 <CardTitle className="text-lg">Pluto</CardTitle>
                                 <CardDescription>
                                     Local secretary mode with Gemini-based
-                                    commentary plus the first shared voice-session
-                                    registry for desktop and future mobile clients.
+                                    commentary plus the first shared
+                                    voice-session registry for desktop and
+                                    future mobile clients.
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
@@ -513,8 +526,8 @@ export function App() {
                                         <Badge
                                             variant="secondary"
                                             className="bg-black/40 text-slate-300 border-white/10">
-                                            {plutoVoiceSessions.length}{' '}
-                                            voice session
+                                            {plutoVoiceSessions.length} voice
+                                            session
                                             {plutoVoiceSessions.length === 1
                                                 ? ''
                                                 : 's'}
@@ -540,13 +553,16 @@ export function App() {
                                             variant="secondary"
                                             size="sm"
                                             onClick={() =>
-                                                updateDraftConfig((current) => ({
-                                                    ...current,
-                                                    pluto: {
-                                                        ...current.pluto,
-                                                        muted: !current.pluto.muted,
-                                                    },
-                                                }))
+                                                updateDraftConfig(
+                                                    (current) => ({
+                                                        ...current,
+                                                        pluto: {
+                                                            ...current.pluto,
+                                                            muted: !current
+                                                                .pluto.muted,
+                                                        },
+                                                    }),
+                                                )
                                             }>
                                             {draftConfig?.pluto.muted
                                                 ? 'Unmute Pluto'
@@ -561,15 +577,17 @@ export function App() {
                                             }
                                             size="sm"
                                             onClick={() =>
-                                                updateDraftConfig((current) => ({
-                                                    ...current,
-                                                    pluto: {
-                                                        ...current.pluto,
-                                                        autoCommentaryEnabled:
-                                                            !current.pluto
-                                                                .autoCommentaryEnabled,
-                                                    },
-                                                }))
+                                                updateDraftConfig(
+                                                    (current) => ({
+                                                        ...current,
+                                                        pluto: {
+                                                            ...current.pluto,
+                                                            autoCommentaryEnabled:
+                                                                !current.pluto
+                                                                    .autoCommentaryEnabled,
+                                                        },
+                                                    }),
+                                                )
                                             }>
                                             {draftConfig?.pluto
                                                 .autoCommentaryEnabled
@@ -586,8 +604,10 @@ export function App() {
                                                 Voice sessions
                                             </h3>
                                             <p className="mt-1 text-xs text-slate-400">
-                                                Start a shared Pluto conversation on desktop now;
-                                                iPhone and Watch clients can dock here later.
+                                                Start a shared Pluto
+                                                conversation on desktop now;
+                                                iPhone and Watch clients can
+                                                dock here later.
                                             </p>
                                         </div>
                                         <Button
@@ -609,89 +629,131 @@ export function App() {
                                     <div className="mt-4 space-y-3">
                                         {plutoVoiceSessions.length === 0 ? (
                                             <div className="rounded-2xl border border-dashed border-white/10 bg-white/5 p-4 text-sm text-slate-400">
-                                                No live Pluto sessions yet. Time to give the tiny space gremlin a microphone.
+                                                No live Pluto sessions yet. Time
+                                                to give the tiny space gremlin a
+                                                microphone.
                                             </div>
                                         ) : (
-                                            plutoVoiceSessions.map((session) => {
-                                                const sessionBusyKey =
-                                                    plutoSessionActionPending ===
-                                                        session.id ||
-                                                    plutoSessionActionPending ===
-                                                        `${session.id}:close`;
-                                                const joinButtonLabel =
-                                                    sessionBusyKey
-                                                        ? 'Working…'
-                                                        : session.speakerClientId
-                                                          ? 'Join as observer'
-                                                          : 'Join as speaker';
+                                            plutoVoiceSessions.map(
+                                                (session) => {
+                                                    const knownClientId =
+                                                        localSessionClients[
+                                                            session.id
+                                                        ] ?? null;
+                                                    const sessionBusyKey =
+                                                        plutoSessionActionPending ===
+                                                            session.id ||
+                                                        plutoSessionActionPending ===
+                                                            `${session.id}:close`;
+                                                    let joinButtonLabel =
+                                                        'Join as speaker';
+                                                    if (knownClientId) {
+                                                        joinButtonLabel =
+                                                            'Open console';
+                                                    } else if (sessionBusyKey) {
+                                                        joinButtonLabel =
+                                                            'Working…';
+                                                    } else if (
+                                                        session.speakerClientId
+                                                    ) {
+                                                        joinButtonLabel =
+                                                            'Join as observer';
+                                                    }
 
-                                                return (
-                                                    <div
-                                                        key={session.id}
-                                                        className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                                                            <div className="space-y-2">
-                                                                <div className="flex flex-wrap items-center gap-2">
-                                                                    <span className="text-sm font-semibold text-slate-100">
-                                                                        {session.title ?? 'Untitled session'}
-                                                                    </span>
-                                                                    <Badge
-                                                                        variant="secondary"
-                                                                        className="bg-black/40 text-slate-300 border-white/10">
-                                                                        {formatSessionStatus(
-                                                                            session.status,
+                                                    return (
+                                                        <div
+                                                            key={session.id}
+                                                            className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                                                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                                                <div className="space-y-2">
+                                                                    <div className="flex flex-wrap items-center gap-2">
+                                                                        <span className="text-sm font-semibold text-slate-100">
+                                                                            {session.title ??
+                                                                                'Untitled session'}
+                                                                        </span>
+                                                                        <Badge
+                                                                            variant="secondary"
+                                                                            className="bg-black/40 text-slate-300 border-white/10">
+                                                                            {formatSessionStatus(
+                                                                                session.status,
+                                                                            )}
+                                                                        </Badge>
+                                                                        <Badge
+                                                                            variant="secondary"
+                                                                            className="bg-black/40 text-slate-300 border-white/10">
+                                                                            {session.speakerClientId
+                                                                                ? 'Speaker attached'
+                                                                                : 'Open mic slot'}
+                                                                        </Badge>
+                                                                    </div>
+                                                                    <div className="text-xs text-slate-400">
+                                                                        Host:{' '}
+                                                                        {
+                                                                            session
+                                                                                .host
+                                                                                .label
+                                                                        }{' '}
+                                                                        · Last
+                                                                        activity{' '}
+                                                                        {formatRelativeTime(
+                                                                            session.lastActivityAt,
                                                                         )}
-                                                                    </Badge>
-                                                                    <Badge
-                                                                        variant="secondary"
-                                                                        className="bg-black/40 text-slate-300 border-white/10">
-                                                                        {session.speakerClientId
-                                                                            ? 'Speaker attached'
-                                                                            : 'Open mic slot'}
-                                                                    </Badge>
+                                                                    </div>
                                                                 </div>
-                                                                <div className="text-xs text-slate-400">
-                                                                    Host: {session.host.label} · Last activity{' '}
-                                                                    {formatRelativeTime(
-                                                                        session.lastActivityAt,
-                                                                    )}
-                                                                </div>
-                                                            </div>
 
-                                                            <div className="flex flex-wrap gap-2">
-                                                                <Button
-                                                                    variant="secondary"
-                                                                    size="sm"
-                                                                    onClick={() =>
-                                                                        void joinPlutoVoiceSession(
-                                                                            session,
-                                                                        )
-                                                                    }
-                                                                    disabled={
-                                                                        sessionBusyKey
-                                                                    }>
-                                                                    {joinButtonLabel}
-                                                                </Button>
-                                                                <Button
-                                                                    variant="outline"
-                                                                    size="sm"
-                                                                    onClick={() =>
-                                                                        void closePlutoVoiceSession(
-                                                                            session.id,
-                                                                        )
-                                                                    }
-                                                                    disabled={
-                                                                        sessionBusyKey
-                                                                    }>
-                                                                    Close
-                                                                </Button>
+                                                                <div className="flex flex-wrap gap-2">
+                                                                    <Button
+                                                                        variant="secondary"
+                                                                        size="sm"
+                                                                        onClick={() =>
+                                                                            void joinPlutoVoiceSession(
+                                                                                session,
+                                                                            )
+                                                                        }
+                                                                        disabled={
+                                                                            sessionBusyKey
+                                                                        }>
+                                                                        {
+                                                                            joinButtonLabel
+                                                                        }
+                                                                    </Button>
+                                                                    <Button
+                                                                        variant="outline"
+                                                                        size="sm"
+                                                                        onClick={() =>
+                                                                            void closePlutoVoiceSession(
+                                                                                session.id,
+                                                                            )
+                                                                        }
+                                                                        disabled={
+                                                                            sessionBusyKey
+                                                                        }>
+                                                                        Close
+                                                                    </Button>
+                                                                </div>
                                                             </div>
                                                         </div>
-                                                    </div>
-                                                );
-                                            })
+                                                    );
+                                                },
+                                            )
                                         )}
                                     </div>
+
+                                    <PlutoVoiceSessionConsole
+                                        apiBase={apiBase}
+                                        desktopToken={desktopToken}
+                                        sessionId={activeVoiceSessionId}
+                                        clientId={activeVoiceSessionClientId}
+                                        sessions={plutoVoiceSessions}
+                                        onError={(message) => setError(message)}
+                                        onInfo={(message) => {
+                                            setStatusMessage(message);
+                                            globalThis.setTimeout(
+                                                () => setStatusMessage(null),
+                                                2500,
+                                            );
+                                        }}
+                                    />
                                 </div>
                             </CardContent>
                         </Card>
@@ -1309,19 +1371,33 @@ export function App() {
     async function createPlutoVoiceSession() {
         try {
             setPlutoSessionActionPending('create');
-            await apiRequest('/pluto/sessions', 'POST', {
-                title: 'Desktop Pluto session',
-                client: {
-                    label:
-                        mode === 'admin'
-                            ? 'Remote Admin'
-                            : 'Desktop Companion',
-                    platform: desktopBridge?.platform ?? mode,
-                    requestedRole: 'speaker',
+            const result = await apiRequest<PlutoVoiceSessionCreateOutput>(
+                '/pluto/sessions',
+                'POST',
+                {
+                    title: 'Desktop Pluto session',
+                    client: {
+                        label:
+                            mode === 'admin'
+                                ? 'Remote Admin'
+                                : 'Desktop Companion',
+                        platform: desktopBridge?.platform ?? mode,
+                        requestedRole: 'speaker',
+                    },
                 },
-            });
+            );
+            if (result.client) {
+                const clientId = result.client.id;
+                setLocalSessionClients((current) => ({
+                    ...current,
+                    [result.session.id]: clientId,
+                }));
+                setActiveVoiceSessionId(result.session.id);
+            }
             await fetchBootstrap();
-            setStatusMessage('Pluto voice session started. Mic glamour pending.');
+            setStatusMessage(
+                'Pluto voice session started. The mic button is now live.',
+            );
             setTimeout(() => setStatusMessage(null), 2500);
         } catch (requestError) {
             setError(
@@ -1335,14 +1411,34 @@ export function App() {
     }
 
     async function joinPlutoVoiceSession(session: PlutoVoiceSessionSummary) {
+        if (localSessionClients[session.id]) {
+            setActiveVoiceSessionId(session.id);
+            setStatusMessage('Reopened Pluto voice console.');
+            setTimeout(() => setStatusMessage(null), 2000);
+            return;
+        }
+
         try {
             setPlutoSessionActionPending(session.id);
-            await apiRequest(`/pluto/sessions/${session.id}/attach`, 'POST', {
-                label:
-                    mode === 'admin' ? 'Remote Admin' : 'Desktop Companion',
-                platform: desktopBridge?.platform ?? mode,
-                requestedRole: session.speakerClientId ? 'observer' : 'speaker',
-            });
+            const result = await apiRequest<PlutoVoiceSessionAttachOutput>(
+                `/pluto/sessions/${session.id}/attach`,
+                'POST',
+                {
+                    label:
+                        mode === 'admin'
+                            ? 'Remote Admin'
+                            : 'Desktop Companion',
+                    platform: desktopBridge?.platform ?? mode,
+                    requestedRole: session.speakerClientId
+                        ? 'observer'
+                        : 'speaker',
+                },
+            );
+            setLocalSessionClients((current) => ({
+                ...current,
+                [result.session.id]: result.client.id,
+            }));
+            setActiveVoiceSessionId(result.session.id);
             await fetchBootstrap();
             setStatusMessage(
                 session.speakerClientId
@@ -1365,8 +1461,18 @@ export function App() {
         try {
             setPlutoSessionActionPending(`${sessionId}:close`);
             await apiRequest(`/pluto/sessions/${sessionId}/close`, 'POST');
+            setLocalSessionClients((current) => {
+                const next = { ...current };
+                delete next[sessionId];
+                return next;
+            });
+            if (activeVoiceSessionId === sessionId) {
+                setActiveVoiceSessionId(null);
+            }
             await fetchBootstrap();
-            setStatusMessage('Pluto voice session closed. Curtain gently falls.');
+            setStatusMessage(
+                'Pluto voice session closed. Curtain gently falls.',
+            );
             setTimeout(() => setStatusMessage(null), 2500);
         } catch (requestError) {
             setError(

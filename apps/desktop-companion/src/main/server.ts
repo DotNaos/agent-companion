@@ -2,9 +2,9 @@ import {
     AppError,
     agentCompanionConfigSchema,
     approvalDecisionSchema,
-  plutoVoiceSessionAttachInputSchema,
-  plutoVoiceSessionDetachInputSchema,
-  plutoVoiceSessionCreateInputSchema,
+    plutoVoiceSessionAttachInputSchema,
+    plutoVoiceSessionCreateInputSchema,
+    plutoVoiceSessionDetachInputSchema,
     toErrorEnvelope,
 } from "@agent-companion/shared";
 import cookieParser from "cookie-parser";
@@ -12,7 +12,7 @@ import express, { type Request, type Response } from "express";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import {
     createLoginUrl,
     exchangeCodeForSession,
@@ -293,25 +293,31 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
 
   const server = http.createServer(app);
   const wsServer = new WebSocketServer({ noServer: true });
+  const plutoSessionProxyServer = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", async (req, socket, head) => {
     const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
     const isDesktop = requestUrl.pathname === "/api/desktop/stream";
     const isAdmin = requestUrl.pathname === "/api/admin/stream";
-    if (!isDesktop && !isAdmin) {
+    const desktopSessionMatch = /^\/api\/desktop\/pluto\/sessions\/([^/]+)\/stream$/.exec(requestUrl.pathname);
+    const adminSessionMatch = /^\/api\/admin\/pluto\/sessions\/([^/]+)\/stream$/.exec(requestUrl.pathname);
+    const isDesktopSession = Boolean(desktopSessionMatch);
+    const isAdminSession = Boolean(adminSessionMatch);
+
+    if (!isDesktop && !isAdmin && !isDesktopSession && !isAdminSession) {
       socket.destroy();
       return;
     }
 
     try {
-      if (isDesktop) {
+      if (isDesktop || isDesktopSession) {
         const token =
           requestUrl.searchParams.get("desktopToken") ?? req.headers["x-desktop-token"]?.toString();
         if (token !== desktopToken) {
           throw new AppError("UNAUTHORIZED", "Desktop token required", 401);
         }
       }
-      if (isAdmin) {
+      if (isAdmin || isAdminSession) {
         ensureOriginAllowed(req, runnerBridge);
         const cookies = parseCookieHeader(req.headers.cookie);
         await verifySession(cookies.agent_companion_session, env.SESSION_SECRET);
@@ -321,8 +327,16 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
       return;
     }
 
-    wsServer.handleUpgrade(req, socket, head, (ws) => {
-      wsServer.emit("connection", ws);
+    if (isDesktop || isAdmin) {
+      wsServer.handleUpgrade(req, socket, head, (ws) => {
+        wsServer.emit("connection", ws);
+      });
+      return;
+    }
+
+    const sessionId = decodeURIComponent(desktopSessionMatch?.[1] ?? adminSessionMatch?.[1] ?? "");
+    plutoSessionProxyServer.handleUpgrade(req, socket, head, (ws) => {
+      plutoSessionProxyServer.emit("connection", ws, sessionId);
     });
   });
 
@@ -345,6 +359,69 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
     });
   });
 
+  plutoSessionProxyServer.on("connection", (ws, sessionId: string) => {
+    const upstreamUrl = new URL(
+      `/internal/pluto/sessions/${encodeURIComponent(sessionId)}/stream`,
+      `http://127.0.0.1:${env.LOCAL_RUNNER_PORT}`,
+    );
+    upstreamUrl.protocol = "ws:";
+
+    const upstream = new WebSocket(upstreamUrl);
+    const pendingMessages: Array<string | Buffer | ArrayBuffer | Buffer[]> = [];
+
+    const flushPending = () => {
+      while (pendingMessages.length > 0 && upstream.readyState === WebSocket.OPEN) {
+        const next = pendingMessages.shift();
+        if (next !== undefined) {
+          upstream.send(next);
+        }
+      }
+    };
+
+    upstream.on("open", () => {
+      flushPending();
+    });
+
+    upstream.on("message", (data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+      }
+    });
+
+    upstream.on("error", (error) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            code: "PLUTO_DESKTOP_PROXY_ERROR",
+            message: error instanceof Error ? error.message : "Desktop Pluto session proxy failed",
+          }),
+        );
+      }
+      ws.close();
+    });
+
+    upstream.on("close", () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    });
+
+    ws.on("message", (data) => {
+      if (upstream.readyState === WebSocket.OPEN) {
+        upstream.send(data);
+        return;
+      }
+      pendingMessages.push(data);
+    });
+
+    ws.on("close", () => {
+      if (upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING) {
+        upstream.close();
+      }
+    });
+  });
+
   return {
     app,
     server,
@@ -355,6 +432,7 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
     },
     close: async () => {
       wsServer.close();
+      plutoSessionProxyServer.close();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });

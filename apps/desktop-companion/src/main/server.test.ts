@@ -1,9 +1,11 @@
 import type { AgentCompanionConfig } from "@agent-companion/shared";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
+import { WebSocket, WebSocketServer } from "ws";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { signSession } from "./auth.js";
 import type { DesktopEnv } from "./env.js";
@@ -11,6 +13,19 @@ import { createDesktopServer } from "./server.js";
 import { UserStore } from "./user-store.js";
 
 const tempDirs: string[] = [];
+
+function decodeWebSocketMessage(data: string | Buffer | ArrayBuffer | Buffer[]) {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (data instanceof Buffer) {
+    return data.toString("utf8");
+  }
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString("utf8");
+  }
+  return Buffer.from(new Uint8Array(data)).toString("utf8");
+}
 
 afterEach(() => {
   while (tempDirs.length > 0) {
@@ -86,15 +101,118 @@ describe("desktop admin server", () => {
     expect(plutoOrchestrator.requestCommentary).toHaveBeenCalledWith("Say hello");
   });
 
+  it("proxies Pluto voice session websocket traffic for desktop clients", async () => {
+    const upstreamServer = http.createServer();
+    const upstreamWsServer = new WebSocketServer({ noServer: true });
+    const forwardedMessages: string[] = [];
+
+    upstreamServer.on("upgrade", (req, socket, head) => {
+      if (req.url !== "/internal/pluto/sessions/session-1/stream") {
+        socket.destroy();
+        return;
+      }
+      upstreamWsServer.handleUpgrade(req, socket, head, (ws) => {
+        upstreamWsServer.emit("connection", ws);
+      });
+    });
+
+    upstreamWsServer.on("connection", (ws) => {
+      ws.send(
+        JSON.stringify({
+          type: "session_snapshot",
+          session: {
+            id: "session-1",
+            title: "Proxy test",
+            host: { id: "local", type: "local", label: "Mac" },
+            status: "idle",
+            model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+            createdAt: new Date().toISOString(),
+            lastActivityAt: new Date().toISOString(),
+            ownerClientId: "client-1",
+            speakerClientId: "client-1",
+            clients: [],
+          },
+        }),
+      );
+
+      ws.on("message", (data) => {
+        forwardedMessages.push(decodeWebSocketMessage(data));
+        ws.send(
+          JSON.stringify({
+            type: "input_transcription",
+            text: "Hallo vom Proxy",
+          }),
+        );
+      });
+    });
+
+    await new Promise<void>((resolve) => {
+      upstreamServer.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const upstreamAddress = upstreamServer.address();
+    const upstreamPort =
+      typeof upstreamAddress === "object" && upstreamAddress ? upstreamAddress.port : 0;
+    const { server } = createTestServer({
+      allowedOrigins: ["https://admin.example.com"],
+      localRunnerPort: upstreamPort,
+    });
+
+    try {
+      await server.listen();
+      const desktopAddress = server.server.address();
+      const desktopPort =
+        typeof desktopAddress === "object" && desktopAddress ? desktopAddress.port : 0;
+      const received: Array<Record<string, unknown>> = [];
+
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(
+          `ws://127.0.0.1:${desktopPort}/api/desktop/pluto/sessions/session-1/stream?desktopToken=desktop-token`,
+        );
+
+        ws.on("message", (data) => {
+          const parsed = JSON.parse(decodeWebSocketMessage(data)) as Record<string, unknown>;
+          received.push(parsed);
+          if (parsed.type === "session_snapshot") {
+            ws.send(JSON.stringify({ type: "ping" }));
+            return;
+          }
+          if (parsed.type === "input_transcription") {
+            ws.close();
+            resolve();
+          }
+        });
+
+        ws.on("error", reject);
+      });
+
+      expect(received[0]).toMatchObject({ type: "session_snapshot" });
+      expect(received.some((entry) => entry.type === "input_transcription")).toBe(true);
+      expect(forwardedMessages).toContain(JSON.stringify({ type: "ping" }));
+    } finally {
+      await server.close();
+      upstreamWsServer.close();
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
 
 });
 
-function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
+function createTestServer({
+  allowedOrigins,
+  localRunnerPort = 4317,
+}: {
+  allowedOrigins: string[];
+  localRunnerPort?: number;
+}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-companion-desktop-"));
   tempDirs.push(dir);
   const env: DesktopEnv = {
-    DESKTOP_PORT: 4318,
-    LOCAL_RUNNER_PORT: 4317,
+    DESKTOP_PORT: 0,
+    LOCAL_RUNNER_PORT: localRunnerPort,
     SESSION_SECRET: "super-secret-session-key",
     GOOGLE_OIDC_CLIENT_ID: "",
     GOOGLE_OIDC_CLIENT_SECRET: "",
@@ -141,6 +259,7 @@ function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
         config,
         activity: [],
         approvals: [],
+        plutoVoiceSessions: [],
           pluto: {
             available: false,
             muted: false,
@@ -213,5 +332,5 @@ function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
     desktopToken: "desktop-token",
   });
 
-  return { app: server.app, env, tunnelManager, plutoOrchestrator };
+  return { app: server.app, env, tunnelManager, plutoOrchestrator, server };
 }
