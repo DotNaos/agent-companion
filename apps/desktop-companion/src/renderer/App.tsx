@@ -6,6 +6,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./components/ui/dialog.js";
 import { Input } from "./components/ui/input.js";
 import { Textarea } from "./components/ui/textarea.js";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs.js";
+import { Badge } from "./components/ui/badge.js";
+import { Checkbox } from "./components/ui/checkbox.js";
+import { Label } from "./components/ui/label.js";
+import { Switch } from "./components/ui/switch.js";
+import { ScrollArea } from "./components/ui/scroll-area.js";
+import { Separator } from "./components/ui/separator.js";
+import { cn } from "./lib/utils.js";
 
 type Bootstrap = {
   runner: {
