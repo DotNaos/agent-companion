@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, ExternalLink } from "lucide-react";
+import { Check, Copy, ExternalLink, Trash2, Plus } from "lucide-react";
 import type { AgentCompanionConfig, ActivityEvent, ApprovalRequest, RunnerStatus } from "@agent-companion/shared";
 import { Button, buttonVariants } from "./components/ui/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card.js";
@@ -179,7 +179,7 @@ export function App() {
         </div>
 
         <Tabs defaultValue="permissions" className="w-full">
-          <TabsList className="mb-6 h-12 w-full justify-start rounded-full border border-white/10 bg-black/20 p-1">
+          <TabsList className="mb-6 h-12 w-full justify-start rounded-full border border-white/10 bg-white/5 p-1.5">
             <TabsTrigger value="permissions" className="rounded-full px-6 data-[state=active]:bg-white data-[state=active]:text-black">
               Permissions
             </TabsTrigger>
@@ -225,7 +225,7 @@ export function App() {
                           <CardDescription>Explicitly grant access to specific paths in the system</CardDescription>
                         </div>
                         <Button variant="secondary" onClick={addPathEntry} size="sm">
-                          Add Path
+                          <Plus className="h-4 w-4 mr-1.5" /> Add Path
                         </Button>
                       </div>
                     </CardHeader>
@@ -251,7 +251,7 @@ export function App() {
                                 />
                               </div>
                               <Button variant="ghost" size="icon" onClick={() => removePathEntry(entry.id)} className="text-slate-400 hover:text-red-400">
-                                ✕
+                                <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
                             <div className="flex flex-wrap gap-4 pt-4 mt-2 border-t border-white/10">
@@ -320,7 +320,7 @@ export function App() {
                   </Card>
 
                   <div className="flex justify-end pt-4 pb-12">
-                    <Button onClick={saveConfig} size="default" className="w-full sm:w-auto">
+                    <Button onClick={saveConfig} size="default" className="w-full sm:w-auto rounded-full bg-white text-black hover:bg-slate-200">
                       Save Configuration
                     </Button>
                   </div>
@@ -1323,7 +1323,7 @@ function EditorList({
                 onChange(items.map((entry) => (entry.id === task.id ? { ...entry, label: event.target.value } : entry)))
               }
               placeholder="Label"
-              className="w-1/3 h-9 focus:ring-white/20"
+              className="w-1/3 h-9 bg-white/5 focus:ring-white/20"
             />
             <Input
               value={task.command.join(" ")}
@@ -1337,17 +1337,17 @@ function EditorList({
                 )
               }
               placeholder="npm run build"
-              className="flex-1 font-mono text-sm h-9 focus:ring-white/20"
+              className="flex-1 font-mono text-sm h-9 bg-white/5 focus:ring-white/20"
             />
-            <Button variant="ghost" size="icon" onClick={() => onChange(items.filter((entry) => entry.id !== task.id))} className="text-slate-400 hover:text-red-400 shrink-0">
-              ✕
+            <Button variant="ghost" size="icon" onClick={() => onChange(items.filter((entry) => entry.id !== task.id))} className="text-slate-500 hover:text-red-400 shrink-0 h-9 w-9">
+              <Trash2 className="h-4 w-4" />
             </Button>
           </div>
         ))}
         <Button
-          variant="secondary"
+          variant="outline"
           size="sm"
-          className="mt-2 w-fit hover:bg-slate-800"
+          className="mt-3 w-fit border-dashed border-white/20 hover:border-white/40 hover:bg-white/5 text-slate-300 rounded-full"
           onClick={() =>
             onChange([
               ...items,
@@ -1362,7 +1362,7 @@ function EditorList({
             ])
           }
         >
-          Add Task
+          <Plus className="h-4 w-4 mr-1.5" /> Add Task
         </Button>
       </CardContent>
     </Card>
@@ -1391,7 +1391,7 @@ function RunCommandRulesEditor({
                 onChange(rules.map((entry) => (entry.id === rule.id ? { ...entry, label: event.target.value } : entry)))
               }
               placeholder="Label"
-              className="w-1/4 h-9 focus:ring-white/20"
+              className="w-1/4 h-9 bg-white/5 focus:ring-white/20"
             />
             <Input
               value={rule.command.join(" ")}
@@ -1405,7 +1405,7 @@ function RunCommandRulesEditor({
                 )
               }
               placeholder="git status"
-              className="flex-1 font-mono text-sm h-9 focus:ring-white/20"
+              className="flex-1 font-mono text-sm h-9 bg-white/5 focus:ring-white/20"
             />
             <div className="flex items-center gap-2 shrink-0 px-2 pl-4">
               <Switch
@@ -1421,15 +1421,15 @@ function RunCommandRulesEditor({
               />
               <Label htmlFor={`rule-approval-${rule.id}`} className="text-xs text-slate-300 cursor-pointer">Needs approval</Label>
             </div>
-            <Button variant="ghost" size="icon" onClick={() => onChange(rules.filter((entry) => entry.id !== rule.id))} className="text-slate-400 hover:text-red-400 shrink-0">
-              ✕
+            <Button variant="ghost" size="icon" onClick={() => onChange(rules.filter((entry) => entry.id !== rule.id))} className="text-slate-500 hover:text-red-400 shrink-0 h-9 w-9">
+              <Trash2 className="h-4 w-4" />
             </Button>
           </div>
         ))}
         <Button
-          variant="secondary"
+          variant="outline"
           size="sm"
-          className="mt-2 w-fit hover:bg-slate-800"
+          className="mt-3 w-fit border-dashed border-white/20 hover:border-white/40 hover:bg-white/5 text-slate-300 rounded-full"
           onClick={() =>
             onChange([
               ...rules,
@@ -1442,7 +1442,7 @@ function RunCommandRulesEditor({
             ])
           }
         >
-          Add Rule
+          <Plus className="h-4 w-4 mr-1.5" /> Add Rule
         </Button>
       </CardContent>
     </Card>
