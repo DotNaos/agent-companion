@@ -47,18 +47,18 @@ function PlutoScene({
 
         if (avatarState !== 'offline' && !isProcessing) {
             // X ist jetzt direkt gemappt: Maus (+X) nach rechts dreht Modell nach rechts.
-            // Y-Multiplier auf 1.3 erhöht, damit er viel weiter nach oben in den Himmel schauen kann.
+            // Y-Multiplikator etwas justiert (1.2), um Gimbal Lock am extremen oberen Limit zu vermeiden.
             if (avatarState === 'idle') {
                 targetX = cursor.x + randomnessRef.current.x;
-                targetY = cursor.y * 1.3 + randomnessRef.current.y;
+                targetY = cursor.y * 1.2 + randomnessRef.current.y;
             } else {
                 targetX = cursor.x;
-                targetY = cursor.y * 1.3;
+                targetY = cursor.y * 1.2;
             }
 
             // Weite Limits setzen, damit Kopf weich in extreme Winkel (fast 90 Grad = 1.57) gehen kann
             targetX = Math.max(-1.3, Math.min(1.3, targetX));
-            targetY = Math.max(-1.4, Math.min(1.2, targetY));
+            targetY = Math.max(-1.2, Math.min(1.2, targetY));
         }
 
         targetLook.current.set(targetX, targetY);

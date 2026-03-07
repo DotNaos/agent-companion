@@ -56,8 +56,20 @@ export class CursorTracker extends EventEmitter {
     const dx = point.x - centerX;
     const dy = point.y - centerY;
     const distance = Math.hypot(dx, dy);
-    const clampedX = clamp(dx / 180, -1, 1);
-    const clampedY = clamp(dy / 180, -1, 1);
+
+    // Kreisförmiges Clamping statt Quadratischem: Erhält den korrekten Blickwinkel (Aspect Ratio)
+    // zur Maus. 350 Pixel wirken gut, um nicht zu ruckartig ans Maximum zu springen.
+    const LOOK_RADIUS = 350;
+    const distRatio = Math.min(distance / LOOK_RADIUS, 1);
+    
+    let clampedX = 0;
+    let clampedY = 0;
+    
+    if (distance > 0) {
+      const angle = Math.atan2(dy, dx);
+      clampedX = Math.cos(angle) * distRatio;
+      clampedY = Math.sin(angle) * distRatio;
+    }
 
     const next: CursorSnapshot = {
       x: clampedX,
