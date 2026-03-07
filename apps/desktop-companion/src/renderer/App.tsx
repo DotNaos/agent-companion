@@ -88,11 +88,11 @@ export function App() {
   }
 
   return (
-    <div className={cn("min-h-screen w-full bg-slate-950 text-slate-50 font-sans selection:bg-emerald-500/30", mode)}>
+    <div className={cn("min-h-screen w-full bg-slate-950 text-slate-50 font-sans selection:bg-white/30", mode)}>
       <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-slate-950/80 px-6 backdrop-blur-md">
         <div className="flex items-center gap-4">
           <div className="flex flex-col">
-            <span className="text-xs font-semibold tracking-wider text-emerald-400 uppercase">agent-companion</span>
+            <span className="text-xs font-semibold tracking-wider text-white uppercase">agent-companion</span>
             <h1 className="text-xl font-bold tracking-tight">{mode === "admin" ? "Remote Admin" : "Desktop Companion"}</h1>
           </div>
           <Badge variant="outline" className="ml-2 border-white/10 text-slate-400">
@@ -126,17 +126,17 @@ export function App() {
 
       <main className="container mx-auto max-w-5xl py-8 px-4 grid gap-8">
         {error && (
-          <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
+          <div className="rounded-3xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
             {error}
           </div>
         )}
         {statusMessage && (
-          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-200">
+          <div className="rounded-3xl border border-white/20 bg-white/10 p-4 text-sm text-slate-200">
             {statusMessage}
           </div>
         )}
         {(!bootstrap?.desktop.tunnelRunning || !bootstrap?.desktop.publicMcpUrl) && (
-          <div className="flex items-center justify-between rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-blue-200">
+          <div className="flex items-center justify-between rounded-3xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-blue-200">
             <span>Finish the ChatGPT MCP setup before linking the app in ChatGPT.</span>
             <Button variant="ghost" size="sm" className="h-8 text-blue-300 hover:text-blue-100 hover:bg-blue-500/20" onClick={() => setShowSetupGuide(true)}>
               View steps
@@ -179,19 +179,19 @@ export function App() {
         </div>
 
         <Tabs defaultValue="permissions" className="w-full">
-          <TabsList className="mb-6 h-12 w-full justify-start rounded-xl border border-white/5 bg-slate-900/50 p-1">
-            <TabsTrigger value="permissions" className="rounded-lg px-6 data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-300">
+          <TabsList className="mb-6 h-12 w-full justify-start rounded-full border border-white/10 bg-black/20 p-1">
+            <TabsTrigger value="permissions" className="rounded-full px-6 data-[state=active]:bg-white data-[state=active]:text-black">
               Permissions
             </TabsTrigger>
-            <TabsTrigger value="approvals" className="rounded-lg px-6 data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-300 flex items-center gap-2">
+            <TabsTrigger value="approvals" className="rounded-full px-6 data-[state=active]:bg-white data-[state=active]:text-black flex items-center gap-2">
               Approvals 
               {approvals.length > 0 && (
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-[10px] font-bold text-slate-950">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] font-bold text-black">
                   {approvals.length}
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="activity" className="rounded-lg px-6 data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-300">
+            <TabsTrigger value="activity" className="rounded-full px-6 data-[state=active]:bg-white data-[state=active]:text-black">
               Live Activity
             </TabsTrigger>
           </TabsList>
@@ -234,27 +234,27 @@ export function App() {
                         <p className="text-sm text-slate-400">No paths allowed yet.</p>
                       ) : (
                         draftConfig.allowedPaths.map((entry) => (
-                          <div key={entry.id} className="rounded-xl border border-white/10 bg-slate-900/50 p-4">
+                          <div key={entry.id} className="rounded-3xl border border-white/10 bg-black/20 p-4">
                             <div className="mb-4 flex items-start gap-4">
                               <div className="grid flex-1 gap-2">
                                 <Input
                                   value={entry.label}
                                   onChange={(event) => updatePathEntry(entry.id, { label: event.target.value })}
                                   placeholder="Alias/Label"
-                                  className="h-9 bg-slate-900 focus:ring-emerald-300/20"
+                                  className="h-9 bg-slate-900 focus:ring-white/20"
                                 />
                                 <Input
                                   value={entry.path}
                                   onChange={(event) => updatePathEntry(entry.id, { path: event.target.value })}
                                   placeholder="/absolute/path"
-                                  className="h-9 bg-slate-900 font-mono text-sm focus:ring-emerald-300/20"
+                                  className="h-9 bg-slate-900 font-mono text-sm focus:ring-white/20"
                                 />
                               </div>
                               <Button variant="ghost" size="icon" onClick={() => removePathEntry(entry.id)} className="text-slate-400 hover:text-red-400">
                                 ✕
                               </Button>
                             </div>
-                            <div className="flex flex-wrap gap-4 pt-4 mt-2 border-t border-white/5">
+                            <div className="flex flex-wrap gap-4 pt-4 mt-2 border-t border-white/10">
                               {CAPABILITIES.map((capability) => (
                                 <div key={capability} className="flex items-center space-x-2">
                                   <Checkbox
@@ -314,7 +314,7 @@ export function App() {
                             },
                           })
                         }
-                        className="font-mono text-sm focus:ring-emerald-300/20"
+                        className="font-mono text-sm focus:ring-white/20"
                       />
                     </CardContent>
                   </Card>
@@ -345,17 +345,17 @@ export function App() {
               </CardHeader>
               <CardContent className="grid gap-4">
                 {approvals.length === 0 ? (
-                  <div className="rounded-xl border border-white/5 bg-slate-900/30 p-8 text-center text-slate-400">
+                  <div className="rounded-3xl border border-white/10 bg-slate-900/30 p-8 text-center text-slate-400">
                     No approvals are waiting.
                   </div>
                 ) : (
                   approvals.map((approval) => (
-                    <div key={approval.id} className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
+                    <div key={approval.id} className="rounded-3xl border border-white/20 bg-white/5 p-5">
                       <div className="mb-4">
-                        <h4 className="text-lg font-semibold text-emerald-300">{approval.toolName}</h4>
+                        <h4 className="text-lg font-semibold text-white">{approval.toolName}</h4>
                         <p className="text-sm text-slate-300 mt-1">{approval.summary}</p>
                       </div>
-                      <ScrollArea className="h-32 w-full rounded-lg bg-black/40 p-3 mb-5 border border-white/5">
+                      <ScrollArea className="h-32 w-full rounded-2xl bg-black/40 p-3 mb-5 border border-white/10">
                         <pre className="text-xs font-mono text-slate-400 break-words whitespace-pre-wrap">
                           {JSON.stringify(approval.payload, null, 2)}
                         </pre>
@@ -385,17 +385,17 @@ export function App() {
                 <CardDescription>Auth, tool calls, writes, command execution, and process lifecycle events.</CardDescription>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-[600px] w-full rounded-xl border border-white/5 bg-slate-900/30 p-4">
+                <ScrollArea className="h-[600px] w-full rounded-3xl border border-white/10 bg-slate-900/30 p-4">
                   <div className="flex flex-col gap-3">
                     {activity.slice().reverse().map((entry) => (
                       <article key={entry.id} className={cn(
-                        "rounded-lg border border-white/5 p-4 transition-colors",
+                        "rounded-2xl border border-white/10 p-4 transition-colors",
                         entry.level === "error" ? "bg-red-500/5 border-red-500/20" : "bg-white/[0.02] hover:bg-white/[0.04]"
                       )}>
                         <div className="flex items-center justify-between mb-2">
                           <Badge variant="outline" className={cn(
                             "border-white/10 font-mono text-[10px]",
-                            entry.level === "error" ? "text-red-400 border-red-400/30" : "text-emerald-400"
+                            entry.level === "error" ? "text-red-400 border-red-400/30" : "text-white"
                           )}>
                             {entry.type}
                           </Badge>
@@ -586,7 +586,7 @@ function SetupGuideModal({
         </DialogHeader>
 
         <div className="mt-6 grid gap-4">
-          <Card className="border-emerald-300/12 bg-[radial-gradient(circle_at_top_left,rgba(112,240,175,0.12),transparent_28%),linear-gradient(180deg,rgba(9,15,25,0.96),rgba(7,11,20,0.96))]">
+          <Card className="border-white/10 bg-slate-900/50">
             <CardHeader>
               <CardTitle className="text-2xl">Use these public URLs</CardTitle>
               <CardDescription>
@@ -1323,7 +1323,7 @@ function EditorList({
                 onChange(items.map((entry) => (entry.id === task.id ? { ...entry, label: event.target.value } : entry)))
               }
               placeholder="Label"
-              className="w-1/3 h-9 focus:ring-emerald-300/20"
+              className="w-1/3 h-9 focus:ring-white/20"
             />
             <Input
               value={task.command.join(" ")}
@@ -1337,7 +1337,7 @@ function EditorList({
                 )
               }
               placeholder="npm run build"
-              className="flex-1 font-mono text-sm h-9 focus:ring-emerald-300/20"
+              className="flex-1 font-mono text-sm h-9 focus:ring-white/20"
             />
             <Button variant="ghost" size="icon" onClick={() => onChange(items.filter((entry) => entry.id !== task.id))} className="text-slate-400 hover:text-red-400 shrink-0">
               ✕
@@ -1391,7 +1391,7 @@ function RunCommandRulesEditor({
                 onChange(rules.map((entry) => (entry.id === rule.id ? { ...entry, label: event.target.value } : entry)))
               }
               placeholder="Label"
-              className="w-1/4 h-9 focus:ring-emerald-300/20"
+              className="w-1/4 h-9 focus:ring-white/20"
             />
             <Input
               value={rule.command.join(" ")}
@@ -1405,7 +1405,7 @@ function RunCommandRulesEditor({
                 )
               }
               placeholder="git status"
-              className="flex-1 font-mono text-sm h-9 focus:ring-emerald-300/20"
+              className="flex-1 font-mono text-sm h-9 focus:ring-white/20"
             />
             <div className="flex items-center gap-2 shrink-0 px-2 pl-4">
               <Switch
