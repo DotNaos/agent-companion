@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { signSession } from "./auth.js";
 import type { DesktopEnv } from "./env.js";
 import { createDesktopServer } from "./server.js";
@@ -70,6 +70,20 @@ describe("desktop admin server", () => {
 
     expect(stopped.status).toBe(200);
     expect(tunnelManager.isRunning()).toBe(false);
+  });
+
+  it("triggers manual Pluto commentary from the desktop API", async () => {
+    const { app, plutoOrchestrator } = createTestServer({
+      allowedOrigins: ["https://admin.example.com"],
+    });
+
+    const response = await request(app)
+      .post("/api/desktop/pluto/commentary")
+      .set("x-desktop-token", "desktop-token")
+      .send({ contextHint: "Say hello" });
+
+    expect(response.status).toBe(200);
+    expect(plutoOrchestrator.requestCommentary).toHaveBeenCalledWith("Say hello");
   });
 
 
@@ -179,6 +193,13 @@ function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
     }
   }
 
+  const plutoOrchestrator = {
+    requestCommentary: vi.fn(async (contextHint?: string) => ({
+      ok: true,
+      contextHint: contextHint ?? null,
+    })),
+  };
+
   const tunnelManager = new FakeTunnelManager();
   const cursorTracker = new FakeCursorTracker();
 
@@ -186,11 +207,11 @@ function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
     env,
     cursorTracker: cursorTracker as never,
     runnerBridge: new FakeRunnerBridge() as never,
-
+    plutoOrchestrator: plutoOrchestrator as never,
     tunnelManager: tunnelManager as never,
     userStore: new UserStore(env.USER_STORE_PATH),
     desktopToken: "desktop-token",
   });
 
-  return { app: server.app, env, tunnelManager };
+  return { app: server.app, env, tunnelManager, plutoOrchestrator };
 }

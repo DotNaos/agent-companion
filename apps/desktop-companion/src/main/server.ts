@@ -19,6 +19,7 @@ import {
 } from "./auth.js";
 import type { CursorTracker } from "./cursor-tracker.js";
 import type { DesktopEnv } from "./env.js";
+import type { PlutoOrchestrator } from "./pluto-orchestrator.js";
 import type { RunnerBridge } from "./runner-bridge.js";
 
 import type { TunnelManager } from "./tunnel-manager.js";
@@ -28,13 +29,14 @@ interface CreateDesktopServerOptions {
   env: DesktopEnv;
   cursorTracker: CursorTracker;
   runnerBridge: RunnerBridge;
+  plutoOrchestrator: PlutoOrchestrator;
   tunnelManager: TunnelManager;
   userStore: UserStore;
   desktopToken: string;
 }
 
 export function createDesktopServer(options: CreateDesktopServerOptions) {
-  const { env, cursorTracker, runnerBridge, tunnelManager, userStore, desktopToken } = options;
+  const { env, cursorTracker, runnerBridge, plutoOrchestrator, tunnelManager, userStore, desktopToken } = options;
   const app = express();
   app.use(cookieParser());
   app.use(express.json({ limit: "1mb" }));
@@ -116,6 +118,14 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
       next(error);
     }
   });
+  app.post("/api/desktop/pluto/commentary", requireDesktopToken(desktopToken), async (req, res, next) => {
+    try {
+      const contextHint = typeof req.body?.contextHint === "string" ? req.body.contextHint : undefined;
+      res.json(await plutoOrchestrator.requestCommentary(contextHint));
+    } catch (error) {
+      next(error);
+    }
+  });
   app.put("/api/desktop/config", requireDesktopToken(desktopToken), async (req, res, next) => {
     try {
       const config = agentCompanionConfigSchema.parse(req.body);
@@ -167,6 +177,14 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
       const messageId = Array.isArray(req.params.messageId) ? req.params.messageId[0] : req.params.messageId;
       const audio = await runnerBridge.fetchPlutoAudio(messageId);
       res.type(audio.contentType).send(audio.buffer);
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/admin/pluto/commentary", async (req, res, next) => {
+    try {
+      const contextHint = typeof req.body?.contextHint === "string" ? req.body.contextHint : undefined;
+      res.json(await plutoOrchestrator.requestCommentary(contextHint));
     } catch (error) {
       next(error);
     }

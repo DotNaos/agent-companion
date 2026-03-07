@@ -45,6 +45,7 @@ interface GeneratedPayload {
 
 export class PlutoService {
 	private readonly ai: GoogleGenAI | null;
+	private readonly recentMessages: string[] = [];
 
 	constructor(private readonly env: RunnerEnv) {
 		this.ai = env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: env.GEMINI_API_KEY }) : null;
@@ -149,21 +150,46 @@ export class PlutoService {
 					mimeType: options.screenshotMimeType ?? "image/png",
 				}
 			: undefined;
-		const textResponse = await this.runTextTurn(prompt, inlineImage);
 
-		const text =
-			textResponse.trim() ||
-			this.buildFallbackText(options.message, options.context, options.delivery, options.tone);
-
+		let text = "";
 		let audioAvailable = false;
-		if (options.delivery !== "bubble" && !options.muted) {
-			const audioResponse = await this.runAudioTurn(text).catch(() => null);
-			if (audioResponse && audioResponse.audioParts.length > 0 && audioResponse.audioMimeType) {
-				const filePath = path.join(this.env.PLUTO_AUDIO_DIR, `${messageId}.wav`);
-				fs.writeFileSync(filePath, convertToWav(audioResponse.audioParts, audioResponse.audioMimeType));
-				audioAvailable = true;
+
+		const useAudio = options.delivery !== "bubble" && !options.muted;
+		const isLiveModel = this.env.PLUTO_MODEL.includes("audio") || this.env.PLUTO_MODEL.includes("live");
+		const persistAudio = (audioParts: string[], audioMimeType: string) => {
+			if (audioParts.length === 0 || !audioMimeType) {
+				return false;
+			}
+			const filePath = path.join(this.env.PLUTO_AUDIO_DIR, `${messageId}.wav`);
+			fs.writeFileSync(filePath, convertToWav(audioParts, audioMimeType));
+			return true;
+		};
+
+		if (isLiveModel && useAudio) {
+			const turn = buildLiveTurn(prompt, inlineImage);
+			const response = await this.runLiveTurn(turn, [Modality.AUDIO], useAudio).catch((e) => {
+				console.error("Pluto Live turn failed:", e);
+				return null;
+			});
+
+			if (response) {
+				text = response.text.trim();
+				audioAvailable = persistAudio(response.audioParts, response.audioMimeType);
+			}
+		} else {
+			const textResponse = await this.runTextTurn(prompt, inlineImage);
+			text = textResponse.trim();
+
+			if (text && useAudio) {
+				const audioResponse = await this.runAudioTurn(text).catch(() => null);
+				if (audioResponse) {
+					audioAvailable = persistAudio(audioResponse.audioParts, audioResponse.audioMimeType);
+				}
 			}
 		}
+
+		text = text || this.buildFallbackText(options.message, options.context, options.delivery, options.tone);
+		this.updateMemory(text);
 
 		return plutoMessageSchema.parse({
 			id: messageId,
@@ -179,13 +205,16 @@ export class PlutoService {
 	}
 
 	private buildFallbackMessage(options: GeneratePlutoMessageOptions): PlutoMessage {
+		const text = this.buildFallbackText(options.message, options.context, options.delivery, options.tone);
+		this.updateMemory(text);
+
 		return plutoMessageSchema.parse({
 			id: crypto.randomUUID(),
 			source: options.source,
 			delivery: options.delivery,
 			tone: options.tone,
 			title: options.title ?? null,
-			text: this.buildFallbackText(options.message, options.context, options.delivery, options.tone),
+			text,
 			createdAt: new Date().toISOString(),
 			expiresAt: new Date(Date.now() + 45_000).toISOString(),
 			audioAvailable: false,
@@ -222,16 +251,31 @@ export class PlutoService {
 		return clipped || "Ich habe gerade nichts Gescheites zu sagen, aber ich sehe geschniegelt und gebügelt aus.";
 	}
 
+	private updateMemory(text: string) {
+		if (!text) return;
+		this.recentMessages.push(text);
+		if (this.recentMessages.length > 5) {
+			this.recentMessages.shift();
+		}
+	}
+
 	private buildPrompt(options: GeneratePlutoMessageOptions) {
 		const voiceInstruction = "Return text only.";
+		const memoryInstruction = this.recentMessages.length > 0
+			? `You recently said:
+${this.recentMessages.slice(-3).map(m => `- "${m}"`).join('\n')}
+Do not repeat these phrases or sentiments. Keep your commentary fresh and diverse.`
+			: "";
+		const identityInstruction = "Your name is Pluto. You are an autonomous, friendly desktop sidekick and secretary companion residing on the user's screen in a small widget. You act as an intermediary for remote AI coding agents, but you also have your own personality (witty, lightly humorous, very encouraging, briefly professional).";
 
 		if (options.source === "autonomous") {
 			return [
-				"You are Pluto, a friendly desktop sidekick who is always present but never creepy.",
+				identityInstruction,
 				"Look at the user's current screenshot and make one short, context-sensitive comment in German.",
 				"Be encouraging, a little witty, and observant. Max 2 short sentences.",
 				"Do not mention passwords, secrets, personal data, or anything you are unsure about. If uncertain, say so playfully.",
 				"No markdown, no bullet points, no stage directions.",
+				memoryInstruction,
 				voiceInstruction,
 				options.message ? `Extra hint: ${options.message}` : "",
 			]
@@ -239,17 +283,20 @@ export class PlutoService {
 				.join("\n\n");
 		}
 
-		const summarizeInstruction =
-			options.delivery === "summarize"
-				? "Summarize the remote agent's update for the user in 1 to 3 short German sentences, like a witty but competent secretary. Mention any action the user should care about."
-				: "Rephrase the remote agent's request into a short German message Pluto can tell the user naturally.";
+		let summarizeInstruction = "";
+		if (options.delivery === "summarize") {
+			summarizeInstruction = "Summarize the remote agent's update for the user in 1 to 3 short German sentences, like a witty but competent secretary. Mention any action the user should care about.";
+		} else {
+			summarizeInstruction = "Rephrase the remote agent's request into a short German message you (Pluto) can tell the user naturally.";
+		}
 
 		return [
-			"You are Pluto, a persistent desktop companion and secretary for remote coding agents.",
+			identityInstruction,
 			"Speak directly to the user in natural German. Sound human, concise, and lightly playful.",
 			summarizeInstruction,
 			`Tone: ${options.tone}.`,
 			"Do not use markdown, bullets, or long preambles.",
+			memoryInstruction,
 			voiceInstruction,
 			options.title ? `Title: ${options.title}` : "",
 			`Primary message: ${options.message}`,
@@ -274,15 +321,20 @@ export class PlutoService {
 			return "";
 		}
 
-		const response = await this.ai.models.generateContent({
-			model: resolvePlutoTextModel(this.env.PLUTO_MODEL),
-			contents: buildGenerateContentParts(prompt, inlineImage),
-			config: {
-				mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
-			},
-		});
+		try {
+			const response = await this.ai.models.generateContent({
+				model: resolvePlutoTextModel(this.env.PLUTO_MODEL),
+				contents: buildGenerateContentParts(prompt, inlineImage),
+				config: {
+					mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+				},
+			});
 
-		return extractResponseText(response);
+			return extractResponseText(response);
+		} catch (error) {
+			console.error("Pluto API generation failed:", error instanceof Error ? error.message : error);
+			return "";
+		}
 	}
 
 	private async runAudioTurn(text: string) {
@@ -313,6 +365,7 @@ export class PlutoService {
 		}
 
 		const textParts: string[] = [];
+		const transcriptParts: string[] = [];
 		const audioParts: string[] = [];
 		let audioMimeType = "";
 		let resolveTurn: (() => void) | null = null;
@@ -327,8 +380,12 @@ export class PlutoService {
 			model: this.env.PLUTO_MODEL,
 			callbacks: {
 				onmessage: (message: LiveServerMessage) => {
+					const transcription = message.serverContent?.outputTranscription?.text?.trim();
+					if (transcription) {
+						transcriptParts.push(transcription);
+					}
 					for (const part of message.serverContent?.modelTurn?.parts ?? []) {
-						if (part.text) {
+						if (part.text && !("thought" in part && part.thought)) {
 							textParts.push(part.text);
 						}
 						if (part.inlineData?.data) {
@@ -351,12 +408,12 @@ export class PlutoService {
 			},
 			config: {
 				responseModalities,
-				mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+				outputAudioTranscription: includeAudio ? {} : undefined,
 				speechConfig: includeAudio
 					? {
 							voiceConfig: {
 								prebuiltVoiceConfig: {
-									voiceName: this.env.PLUTO_VOICE_NAME,
+									voiceName: this.env.PLUTO_VOICE_NAME || "Achird",
 								},
 							},
 						}
@@ -381,7 +438,7 @@ export class PlutoService {
 		}
 
 		return {
-			text: textParts.join("\n").trim(),
+			text: transcriptParts.join(" ").trim() || textParts.join("\n").trim(),
 			audioParts,
 			audioMimeType,
 		};
@@ -389,11 +446,11 @@ export class PlutoService {
 }
 
 export function resolvePlutoTextModel(audioModel: string) {
-	if (audioModel.includes('native-audio') || audioModel.includes('live')) {
-		return 'gemini-2.5-flash';
+	const normalized = audioModel.replace(/^models\//, "");
+	if (normalized.includes("native-audio") || normalized.includes("live")) {
+		return "gemini-2.5-flash";
 	}
-
-	return audioModel;
+	return normalized;
 }
 
 export function buildGenerateContentParts(

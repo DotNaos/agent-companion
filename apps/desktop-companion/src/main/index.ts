@@ -84,6 +84,7 @@ const desktopServer = createDesktopServer({
   env,
   cursorTracker,
   runnerBridge,
+  plutoOrchestrator,
   tunnelManager,
   userStore,
   desktopToken,

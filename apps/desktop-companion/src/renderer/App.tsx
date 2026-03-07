@@ -18,7 +18,7 @@ import {
     X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { PlutoAvatar } from './components/PlutoAvatar.js';
+import { PlutoAvatar, plutoAudioState } from './components/PlutoAvatar.js';
 import { Badge } from './components/ui/badge.js';
 import { Button, buttonVariants } from './components/ui/button.js';
 import {
@@ -121,6 +121,7 @@ export function App() {
     const draftDirtyRef = useRef(false);
     const [error, setError] = useState<string | null>(null);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
+    const [plutoTriggerPending, setPlutoTriggerPending] = useState(false);
     const [showSetupGuide, setShowSetupGuide] = useState(false);
     const [showFullAccessConfirm, setShowFullAccessConfirm] = useState(false);
     const [currentView, setCurrentView] = useState<
@@ -503,6 +504,21 @@ export function App() {
                                     </Badge>
                                 </div>
                                 <div className="flex flex-wrap gap-3">
+                                    <Button
+                                        size="sm"
+                                        onClick={() =>
+                                            void triggerPlutoCommentary()
+                                        }
+                                        disabled={
+                                            plutoTriggerPending ||
+                                            !bootstrap?.runner.pluto
+                                                .available ||
+                                            bootstrap?.runner.pluto.pending
+                                        }>
+                                        {plutoTriggerPending
+                                            ? 'Pluto kommentiert…'
+                                            : 'Trigger commentary'}
+                                    </Button>
                                     <Button
                                         variant="secondary"
                                         size="sm"
@@ -1134,6 +1150,29 @@ export function App() {
         }
     }
 
+    async function triggerPlutoCommentary() {
+        try {
+            setPlutoTriggerPending(true);
+            await apiRequest('/pluto/commentary', 'POST', {
+                contextHint:
+                    'Give one short German comment about what the user is currently doing on screen.',
+            });
+            await fetchBootstrap();
+            setStatusMessage(
+                'Pluto is cooking up commentary. Tiny celestial saucepan included.',
+            );
+            setTimeout(() => setStatusMessage(null), 2500);
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error
+                    ? requestError.message
+                    : 'Pluto commentary trigger failed',
+            );
+        } finally {
+            setPlutoTriggerPending(false);
+        }
+    }
+
     async function apiRequest<T = unknown>(
         pathname: string,
         method: string,
@@ -1395,6 +1434,9 @@ function OverlayView({
     desktopToken?: string;
 }) {
     const [frameTime, setFrameTime] = useState(() => Date.now());
+    const [isSpeaking, setIsSpeaking] = useState(false);
+    const [msgStartTime, setMsgStartTime] = useState(0);
+    const [lastMsgId, setLastMsgId] = useState<string | null>(null);
     const approvalCount = bootstrap?.runner.approvals.length ?? 0;
     const primaryApproval = bootstrap?.runner.approvals[0] ?? null;
     const activePlutoMessage = getVisiblePlutoMessage(
@@ -1433,6 +1475,21 @@ function OverlayView({
         plutoPending ||
         (latestActivity?.type === 'tool_call' && recentAgeMs < 1_600);
     const lastPlayedMessageRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        if (activePlutoMessage?.id && activePlutoMessage.id !== lastMsgId) {
+            setLastMsgId(activePlutoMessage.id);
+            setMsgStartTime(Date.now());
+        }
+    }, [activePlutoMessage?.id, lastMsgId]);
+
+    const streamProgressChars =
+        activePlutoMessage && msgStartTime
+            ? Math.floor((frameTime - msgStartTime) / 25)
+            : 0;
+    const streamedText = activePlutoMessage
+        ? activePlutoMessage.text.slice(0, Math.max(0, streamProgressChars))
+        : '';
 
     useEffect(() => {
         const intervalId = globalThis.setInterval(
@@ -1476,12 +1533,119 @@ function OverlayView({
 
             objectUrl = URL.createObjectURL(blob);
             const audio = new Audio(objectUrl);
+
+            audio.addEventListener('play', () => {
+                if (!cancelled) {
+                    setIsSpeaking(true);
+                    if (plutoAudioState) {
+                        plutoAudioState.isSpeaking = true;
+                    }
+                }
+            });
+            audio.addEventListener('ended', () => {
+                if (!cancelled) {
+                    setIsSpeaking(false);
+                    if (plutoAudioState) {
+                        plutoAudioState.isSpeaking = false;
+                        plutoAudioState.volume = 0;
+                    }
+                }
+            });
+            audio.addEventListener('pause', () => {
+                if (!cancelled) {
+                    setIsSpeaking(false);
+                    if (plutoAudioState) {
+                        plutoAudioState.isSpeaking = false;
+                        plutoAudioState.volume = 0;
+                    }
+                }
+            });
+
+            // Web Audio API to analyze frequency data and map to plutoAudioState
+            let audioSource: MediaElementAudioSourceNode | undefined;
+            const maybeConnectAnalyser = () => {
+                try {
+                    // Important: createMediaElementSource can be called only once per HTMLMediaElement.
+                    // We also need to construct an AudioContext upon user gesture. A play event is fine.
+                    const win = window as any;
+                    let ctx: AudioContext = win._plutoAudioCtx;
+                    if (!ctx) {
+                        ctx = new (
+                            window.AudioContext ||
+                            (window as any).webkitAudioContext
+                        )();
+                        win._plutoAudioCtx = ctx;
+                    }
+                    if (ctx.state === 'suspended') {
+                        void ctx.resume();
+                    }
+
+                    let analyser: AnalyserNode = win._plutoAnalyser;
+                    if (!analyser) {
+                        analyser = ctx.createAnalyser();
+                        analyser.fftSize = 256; // Fast and simple
+                        win._plutoAnalyser = analyser;
+                    }
+
+                    // We only create the source node once per audio element, since they are singletons here
+                    if (!(audio as any)._hasSourceConnected) {
+                        audioSource = ctx.createMediaElementSource(audio);
+                        audioSource.connect(analyser);
+                        analyser.connect(ctx.destination);
+                        (audio as any)._hasSourceConnected = true;
+                    }
+
+                    const dataArray = new Uint8Array(
+                        analyser.frequencyBinCount,
+                    );
+
+                    // The volume update loop
+                    const updateVolume = () => {
+                        if (audio.paused || audio.ended || cancelled) {
+                            if (plutoAudioState) {
+                                plutoAudioState.volume = 0;
+                            }
+                            return;
+                        }
+
+                        analyser.getByteFrequencyData(dataArray);
+
+                        // Calculate RMS or simple average
+                        let sum = 0;
+                        for (let i = 0; i < dataArray.length; i++) {
+                            sum += dataArray[i];
+                        }
+                        const average = sum / dataArray.length;
+
+                        // Map 0-255 to 0.0-1.0
+                        const normalizedVolume = average / 255.0;
+                        if (plutoAudioState) {
+                            plutoAudioState.volume = normalizedVolume;
+                        }
+
+                        requestAnimationFrame(updateVolume);
+                    };
+
+                    // kick it off
+                    updateVolume();
+                } catch (e) {
+                    console.error('Audio analyser failed:', e);
+                }
+            };
+
+            audio.addEventListener('play', maybeConnectAnalyser);
+
             await audio.play().catch(() => undefined);
             lastPlayedMessageRef.current = activePlutoMessage.id;
         })();
 
         return () => {
             cancelled = true;
+            setIsSpeaking(false);
+            if (plutoAudioState) {
+                plutoAudioState.isSpeaking = false;
+                plutoAudioState.volume = 0;
+            }
             if (objectUrl) {
                 URL.revokeObjectURL(objectUrl);
             }
@@ -1560,11 +1724,12 @@ function OverlayView({
                     </div>
                 ) : activePlutoMessage ? (
                     <div className="pet-bubble passive">
-                        <div className="pet-bubble-chip">
-                            {describePlutoChip(activePlutoMessage)}
+                        <div className="pet-bubble-header">
+                            <strong>
+                                {activePlutoMessage.title ?? 'Pluto'}
+                            </strong>
                         </div>
-                        <strong>{activePlutoMessage.title ?? 'Pluto'}</strong>
-                        <p>{activePlutoMessage.text}</p>
+                        <p>{streamedText}</p>
                     </div>
                 ) : null}
                 <button
@@ -1578,6 +1743,7 @@ function OverlayView({
                         avatarState={avatarState}
                         cursor={cursor}
                         isProcessing={isProcessing}
+                        isSpeaking={isSpeaking}
                         curious={curious}
                         phase={phase}
                         blink={buildBlink(phase, avatarState, curious)}
