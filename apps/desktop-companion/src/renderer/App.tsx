@@ -142,8 +142,6 @@ export function App() {
           actionLabel={bootstrap?.desktop.tunnelRunning ? "Stop Tunnel" : "Start Tunnel"}
           onAction={toggleTunnel}
         />
-        <MetricCard title="Approvals" value={`${approvals.length}`} />
-        <MetricCard title="Processes" value={`${bootstrap?.runner.status.runningProcesses ?? 0}`} />
       </section>
 
       <div className="layout-grid">
@@ -811,16 +809,6 @@ function drawPetSphere(
 
   ctx.clearRect(0, 0, size, size);
 
-  const backdrop = ctx.createRadialGradient(cx, cy, radius * 0.1, cx, cy, radius * 1.7);
-  backdrop.addColorStop(0, "rgba(5, 8, 14, 0.99)");
-  backdrop.addColorStop(0.62, "rgba(5, 8, 14, 0.96)");
-  backdrop.addColorStop(0.84, "rgba(5, 8, 14, 0.84)");
-  backdrop.addColorStop(1, "rgba(5, 8, 14, 0)");
-  ctx.fillStyle = backdrop;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius * 1.78, 0, Math.PI * 2);
-  ctx.fill();
-
   ctx.fillStyle = "rgba(0,0,0,0.28)";
   ctx.beginPath();
   ctx.ellipse(112, 188, 52, 14, 0, 0, Math.PI * 2);
@@ -863,7 +851,11 @@ function renderSphereBody(
   pitch: number,
   palette: { rim: string; line: string; lineMuted: string; shadow: [number, number, number] },
 ) {
-  const image = ctx.createImageData(radius * 2, radius * 2);
+  const offscreen = document.createElement("canvas");
+  offscreen.width = radius * 2;
+  offscreen.height = radius * 2;
+  const offCtx = offscreen.getContext("2d")!;
+  const image = offCtx.createImageData(radius * 2, radius * 2);
   const keyLight = normalize3([0.02 + yaw * 0.08, 0.01 + pitch * 0.06, 1]);
   const fillLight = normalize3([0.24, 0.12, 0.96]);
   const rimLight = normalize3([-0.42, 0.04, 0.58]);
@@ -900,16 +892,8 @@ function renderSphereBody(
     }
   }
 
-  ctx.putImageData(image, cx - radius, cy - radius);
-
-  const gloss = ctx.createRadialGradient(cx - radius * 0.01, cy - radius * 0.01, 1, cx, cy, radius * 0.2);
-  gloss.addColorStop(0, "rgba(255,255,255,0.1)");
-  gloss.addColorStop(0.34, "rgba(255,255,255,0.03)");
-  gloss.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = gloss;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius - 4, 0, Math.PI * 2);
-  ctx.fill();
+  offCtx.putImageData(image, 0, 0);
+  ctx.drawImage(offscreen, cx - radius, cy - radius, radius * 2, radius * 2);
 
   ctx.strokeStyle = palette.rim;
   ctx.lineWidth = 6.5;
