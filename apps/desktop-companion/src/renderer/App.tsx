@@ -10,9 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs.j
 import { Badge } from "./components/ui/badge.js";
 import { Checkbox } from "./components/ui/checkbox.js";
 import { Label } from "./components/ui/label.js";
-import { Switch } from "./components/ui/switch.js";
 import { ScrollArea } from "./components/ui/scroll-area.js";
-import { Separator } from "./components/ui/separator.js";
 import { cn } from "./lib/utils.js";
 
 type Bootstrap = {
@@ -47,9 +45,32 @@ export function App() {
   const apiBase = mode === "admin" || mode === "login" ? "/api/admin" : "/api/desktop";
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [draftConfig, setDraftConfig] = useState<AgentCompanionConfig | null>(null);
+  const draftDirtyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [showSetupGuide, setShowSetupGuide] = useState(false);
+
+  function replaceDraftConfig(nextConfig: AgentCompanionConfig | null) {
+    draftDirtyRef.current = false;
+    setDraftConfig(nextConfig);
+  }
+
+  function updateDraftConfig(updater: (current: AgentCompanionConfig) => AgentCompanionConfig) {
+    setDraftConfig((current) => {
+      if (!current) {
+        return current;
+      }
+      draftDirtyRef.current = true;
+      return updater(current);
+    });
+  }
+
+  function syncBootstrap(nextBootstrap: Bootstrap, forceDraft = false) {
+    setBootstrap(nextBootstrap);
+    if (forceDraft || !draftDirtyRef.current) {
+      replaceDraftConfig(nextBootstrap.runner.config);
+    }
+  }
 
   useEffect(() => {
     void fetchBootstrap();
@@ -64,8 +85,7 @@ export function App() {
     socket.addEventListener("message", (event) => {
       const message = JSON.parse(event.data) as { type: string; data: Bootstrap };
       if (message.type === "bootstrap") {
-        setBootstrap(message.data);
-        setDraftConfig(message.data.runner.config);
+        syncBootstrap(message.data);
       }
     });
     socket.addEventListener("error", () => {
@@ -209,7 +229,7 @@ export function App() {
                       <Input
                         value={draftConfig.projectsRoot ?? ""}
                         onChange={(event) =>
-                          setDraftConfig({ ...draftConfig, projectsRoot: event.target.value || null })
+                          updateDraftConfig((current) => ({ ...current, projectsRoot: event.target.value || null }))
                         }
                         placeholder="/Users/you/projects"
                         className="max-w-xl"
@@ -284,16 +304,16 @@ export function App() {
                   <EditorList
                     title="Allowed Repo Tasks"
                     items={draftConfig.tasks}
-                    onChange={(tasks) => setDraftConfig({ ...draftConfig, tasks })}
+                    onChange={(tasks) => updateDraftConfig((current) => ({ ...current, tasks }))}
                   />
                   <EditorList
                     title="Allowed Dev Server Tasks"
                     items={draftConfig.devServerTasks}
-                    onChange={(devServerTasks) => setDraftConfig({ ...draftConfig, devServerTasks })}
+                    onChange={(devServerTasks) => updateDraftConfig((current) => ({ ...current, devServerTasks }))}
                   />
                   <RunCommandRulesEditor
                     rules={draftConfig.runCommandRules}
-                    onChange={(runCommandRules) => setDraftConfig({ ...draftConfig, runCommandRules })}
+                    onChange={(runCommandRules) => updateDraftConfig((current) => ({ ...current, runCommandRules }))}
                   />
 
                   <Card>
@@ -306,13 +326,13 @@ export function App() {
                         rows={3}
                         value={draftConfig.auth.allowedOrigins.join("\n")}
                         onChange={(event) =>
-                          setDraftConfig({
-                            ...draftConfig,
+                          updateDraftConfig((current) => ({
+                            ...current,
                             auth: {
-                              ...draftConfig.auth,
-                              allowedOrigins: event.target.value.split("\n").map((value) => value.trim()).filter(bool => bool),
+                              ...current.auth,
+                              allowedOrigins: event.target.value.split("\n").map((value) => value.trim()).filter(Boolean),
                             },
-                          })
+                          }))
                         }
                         className="font-mono text-sm focus:ring-white/20"
                       />
@@ -356,7 +376,7 @@ export function App() {
                         <p className="text-sm text-slate-300 mt-1">{approval.summary}</p>
                       </div>
                       <ScrollArea className="h-32 w-full rounded-2xl bg-black/40 p-3 mb-5 border border-white/10">
-                        <pre className="text-xs font-mono text-slate-400 break-words whitespace-pre-wrap">
+                        <pre className="text-xs font-mono text-slate-400 wrap-break-word whitespace-pre-wrap">
                           {JSON.stringify(approval.payload, null, 2)}
                         </pre>
                       </ScrollArea>
@@ -385,12 +405,12 @@ export function App() {
                 <CardDescription>Auth, tool calls, writes, command execution, and process lifecycle events.</CardDescription>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-[600px] w-full rounded-3xl border border-white/10 bg-slate-900/30 p-4">
+                <ScrollArea className="h-150 w-full rounded-3xl border border-white/10 bg-slate-900/30 p-4">
                   <div className="flex flex-col gap-3">
                     {activity.slice().reverse().map((entry) => (
                       <article key={entry.id} className={cn(
                         "rounded-2xl border border-white/10 p-4 transition-colors",
-                        entry.level === "error" ? "bg-red-500/5 border-red-500/20" : "bg-white/[0.02] hover:bg-white/[0.04]"
+                        entry.level === "error" ? "bg-red-500/5 border-red-500/20" : "bg-white/2 hover:bg-white/4"
                       )}>
                         <div className="flex items-center justify-between mb-2">
                           <Badge variant="outline" className={cn(
@@ -404,14 +424,14 @@ export function App() {
                           </time>
                         </div>
                         <p className={cn(
-                          "text-sm break-words", 
+                          "text-sm wrap-break-word", 
                           entry.level === "error" ? "text-red-200" : "text-slate-200"
                         )}>
                           {entry.message}
                         </p>
                         {Object.keys(entry.data).length > 0 && (
                           <div className="mt-3 rounded bg-black/40 p-2 overflow-x-auto">
-                            <pre className="text-[11px] font-mono text-slate-400 break-words whitespace-pre-wrap">
+                            <pre className="text-[11px] font-mono text-slate-400 wrap-break-word whitespace-pre-wrap">
                               {JSON.stringify(entry.data, null, 2)}
                             </pre>
                           </div>
@@ -445,8 +465,7 @@ export function App() {
   async function fetchBootstrap() {
     try {
       const result = await apiRequest<Bootstrap>("/bootstrap", "GET");
-      setBootstrap(result);
-      setDraftConfig(result.runner.config);
+      syncBootstrap(result);
       setError(null);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Bootstrap request failed");
@@ -457,10 +476,10 @@ export function App() {
     if (!draftConfig) {
       return;
     }
-    setDraftConfig({
-      ...draftConfig,
+    updateDraftConfig((current) => ({
+      ...current,
       allowedPaths: [
-        ...draftConfig.allowedPaths,
+        ...current.allowedPaths,
         {
           id: crypto.randomUUID(),
           label: "Manual grant",
@@ -477,27 +496,27 @@ export function App() {
           },
         },
       ],
-    });
+    }));
   }
 
   function updatePathEntry(id: string, patch: Partial<AgentCompanionConfig["allowedPaths"][number]>) {
     if (!draftConfig) {
       return;
     }
-    setDraftConfig({
-      ...draftConfig,
-      allowedPaths: draftConfig.allowedPaths.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)),
-    });
+    updateDraftConfig((current) => ({
+      ...current,
+      allowedPaths: current.allowedPaths.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)),
+    }));
   }
 
   function removePathEntry(id: string) {
     if (!draftConfig) {
       return;
     }
-    setDraftConfig({
-      ...draftConfig,
-      allowedPaths: draftConfig.allowedPaths.filter((entry) => entry.id !== id),
-    });
+    updateDraftConfig((current) => ({
+      ...current,
+      allowedPaths: current.allowedPaths.filter((entry) => entry.id !== id),
+    }));
   }
 
   async function saveConfig() {
@@ -506,9 +525,11 @@ export function App() {
     }
     try {
       await apiRequest("/config", "PUT", draftConfig);
+      draftDirtyRef.current = false;
       setStatusMessage("Configuration saved.");
       setTimeout(() => setStatusMessage(null), 2000);
-      await fetchBootstrap();
+      const result = await apiRequest<Bootstrap>("/bootstrap", "GET");
+      syncBootstrap(result, true);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Config update failed");
     }
@@ -529,8 +550,7 @@ export function App() {
     try {
       const pathname = bootstrap?.desktop.tunnelRunning ? "/tunnel/stop" : "/tunnel/start";
       const result = await apiRequest<Bootstrap>(pathname, "POST");
-      setBootstrap(result);
-      setDraftConfig(result.runner.config);
+      syncBootstrap(result);
       setStatusMessage(result.desktop.tunnelRunning ? "Tunnel started." : "Tunnel stopped.");
       setTimeout(() => setStatusMessage(null), 2000);
     } catch (requestError) {
@@ -1331,7 +1351,7 @@ function EditorList({
                 onChange(
                   items.map((entry) =>
                     entry.id === task.id
-                      ? { ...entry, command: event.target.value.split(" ").map((part) => part.trim()).filter(bool => bool) }
+                      ? { ...entry, command: event.target.value.split(" ").map((part) => part.trim()).filter(Boolean) }
                       : entry,
                   ),
                 )
@@ -1423,7 +1443,7 @@ function RunCommandRulesEditor({
         })}
         <input
           type="text"
-          className="flex-1 min-w-[140px] h-8 bg-transparent border-none text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-0 px-2"
+          className="flex-1 min-w-35 h-8 bg-transparent border-none text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-0 px-2"
           placeholder="Add command (e.g. pnpm install) ..."
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
