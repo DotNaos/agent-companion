@@ -25,6 +25,7 @@ type Props = Readonly<{
     sessionId: string | null;
     clientId: string | null;
     sessions: PlutoVoiceSessionSummary[];
+    variant?: 'panel' | 'overlay';
     onError: (message: string) => void;
     onInfo: (message: string) => void;
 }>;
@@ -35,6 +36,7 @@ export function PlutoVoiceSessionConsole({
     sessionId,
     clientId,
     sessions,
+    variant = 'panel',
     onError,
     onInfo,
 }: Props) {
@@ -59,8 +61,15 @@ export function PlutoVoiceSessionConsole({
     const activeSession = session ?? null;
     const isSpeaker =
         Boolean(clientId) && activeSession?.speakerClientId === clientId;
-    const recordingHint = getRecordingHint(isSpeaker, Boolean(sessionId));
+    const isOverlay = variant === 'overlay';
+    const recordingHint = getRecordingHint(
+        isSpeaker,
+        Boolean(sessionId),
+        isOverlay,
+    );
     const roleLabel = getRoleLabel(isSpeaker, Boolean(clientId));
+    const visibleTimeline = isOverlay ? timeline.slice(-4) : timeline;
+    const descriptionText = getDescriptionText(Boolean(sessionId), isOverlay);
 
     useEffect(() => {
         setSession(null);
@@ -129,7 +138,9 @@ export function PlutoVoiceSessionConsole({
         }
 
         if (!navigator.mediaDevices?.getUserMedia) {
-            onError('This browser environment does not expose microphone capture.');
+            onError(
+                'This browser environment does not expose microphone capture.',
+            );
             return;
         }
 
@@ -177,10 +188,10 @@ export function PlutoVoiceSessionConsole({
             setIsRecording(true);
             appendTimelineEntry({
                 label: 'Mic',
-                text: 'Turn started — Pluto is listening.',
+                text: 'Recording started.',
                 tone: 'accent',
             });
-            onInfo('Microphone turn started. Speak now, stellar captain.');
+            onInfo('Recording started. Speak and tap again when you are done.');
         } catch (error) {
             cleanupAudioCapture();
             onError(
@@ -199,7 +210,7 @@ export function PlutoVoiceSessionConsole({
         recorder.stop();
         appendTimelineEntry({
             label: 'Mic',
-            text: 'Turn ended — waiting for Pluto to answer.',
+            text: 'Recording stopped. Sending to Pluto…',
             tone: 'neutral',
         });
     }
@@ -321,7 +332,10 @@ export function PlutoVoiceSessionConsole({
         source.buffer = buffer;
         source.connect(ctx.destination);
 
-        const startAt = Math.max(ctx.currentTime, scheduledPlaybackTimeRef.current);
+        const startAt = Math.max(
+            ctx.currentTime,
+            scheduledPlaybackTimeRef.current,
+        );
         scheduledPlaybackTimeRef.current = startAt + buffer.duration;
         playbackSourcesRef.current += 1;
         setIsPlaying(true);
@@ -408,16 +422,19 @@ export function PlutoVoiceSessionConsole({
     }
 
     return (
-        <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+        <div
+            className={
+                isOverlay
+                    ? 'flex w-full flex-col gap-3 text-left'
+                    : 'mt-4 rounded-2xl border border-white/10 bg-slate-950/60 p-4'
+            }>
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <h4 className="text-sm font-semibold text-slate-100">
-                        Live voice console
+                        {isOverlay ? 'Voice chat' : 'Live voice console'}
                     </h4>
                     <p className="mt-1 text-xs text-slate-400">
-                        {sessionId
-                            ? 'Desktop push-to-talk over the live Pluto session stream.'
-                            : 'Start or join a session to open the live Pluto console.'}
+                        {descriptionText}
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -440,33 +457,53 @@ export function PlutoVoiceSessionConsole({
                 <Button
                     size="sm"
                     onClick={() => void toggleRecording()}
-                    disabled={!sessionId || !clientId || !isSpeaker || streamState !== 'connected'}>
+                    disabled={
+                        !sessionId ||
+                        !clientId ||
+                        !isSpeaker ||
+                        streamState !== 'connected'
+                    }>
                     {isRecording ? (
                         <MicOff className="mr-1.5 h-4 w-4" />
                     ) : (
                         <Mic className="mr-1.5 h-4 w-4" />
                     )}
-                    {isRecording ? 'End turn' : 'Start turn'}
+                    {isRecording ? 'Stop & send' : 'Record'}
                 </Button>
-                <span className="text-xs text-slate-400">
-                    {recordingHint}
-                </span>
+                <span className="text-xs text-slate-400">{recordingHint}</span>
             </div>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_16rem]">
-                <ScrollArea className="h-56 rounded-2xl border border-white/10 bg-black/30 p-3">
+            <div
+                className={
+                    isOverlay
+                        ? 'mt-1 grid gap-3'
+                        : 'mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_16rem]'
+                }>
+                <ScrollArea
+                    className={
+                        isOverlay
+                            ? 'h-44 rounded-2xl border border-white/10 bg-black/30 p-3'
+                            : 'h-56 rounded-2xl border border-white/10 bg-black/30 p-3'
+                    }>
                     <div className="space-y-3">
-                        {timeline.length === 0 ? (
+                        {visibleTimeline.length === 0 ? (
                             <div className="text-sm text-slate-500">
                                 Pluto is waiting for the first live event.
                             </div>
                         ) : (
-                            timeline.map((entry) => (
+                            visibleTimeline.map((entry) => (
                                 <div
                                     key={entry.id}
-                                    className="rounded-xl border border-white/8 bg-white/4 p-3">
+                                    className={
+                                        isOverlay
+                                            ? 'rounded-2xl border border-white/8 bg-white/6 p-3'
+                                            : 'rounded-xl border border-white/8 bg-white/4 p-3'
+                                    }>
                                     <div className="flex items-center justify-between gap-2">
-                                        <span className={timelineToneClass(entry.tone)}>
+                                        <span
+                                            className={timelineToneClass(
+                                                entry.tone,
+                                            )}>
                                             {entry.label}
                                         </span>
                                         <time className="text-[11px] text-slate-500">
@@ -491,11 +528,19 @@ export function PlutoVoiceSessionConsole({
                     <dl className="mt-3 space-y-2">
                         <div>
                             <dt className="text-slate-500">Session</dt>
-                            <dd>{activeSession?.title ?? selectedSummary?.title ?? '—'}</dd>
+                            <dd>
+                                {activeSession?.title ??
+                                    selectedSummary?.title ??
+                                    '—'}
+                            </dd>
                         </div>
                         <div>
                             <dt className="text-slate-500">Status</dt>
-                            <dd>{activeSession?.status ?? selectedSummary?.status ?? '—'}</dd>
+                            <dd>
+                                {activeSession?.status ??
+                                    selectedSummary?.status ??
+                                    '—'}
+                            </dd>
                         </div>
                         <div>
                             <dt className="text-slate-500">Role</dt>
@@ -569,11 +614,7 @@ function pickRecordingMimeType() {
         return '';
     }
 
-    const candidates = [
-        'audio/webm;codecs=opus',
-        'audio/webm',
-        'audio/mp4',
-    ];
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
 
     return (
         candidates.find((candidate) =>
@@ -637,14 +678,31 @@ function parseSampleRate(mimeType: string, fallback: number) {
     return fallback;
 }
 
-function getRecordingHint(isSpeaker: boolean, hasSession: boolean) {
+function getRecordingHint(
+    isSpeaker: boolean,
+    hasSession: boolean,
+    isOverlay: boolean,
+) {
     if (isSpeaker) {
-        return 'One press starts your turn, the next press ends it and Pluto answers.';
+        return isOverlay
+            ? 'Press Record once to start and once more to stop and send.'
+            : 'Press Record once to start and again to stop and send.';
     }
     if (hasSession) {
         return 'This desktop client is currently observing. Rejoin as speaker to talk.';
     }
     return 'No active session selected yet.';
+}
+
+function getDescriptionText(hasSession: boolean, isOverlay: boolean) {
+    if (hasSession) {
+        return isOverlay
+            ? 'Tap Record, talk, tap again. Pluto answers automatically.'
+            : 'Desktop voice chat over the live Pluto session stream.';
+    }
+    return isOverlay
+        ? 'Select a Pluto session in the dashboard to chat here.'
+        : 'Start or join a session to open the live Pluto console.';
 }
 
 function getRoleLabel(isSpeaker: boolean, hasClient: boolean) {

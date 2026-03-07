@@ -111,6 +111,13 @@ const ACCESS_MODE_OPTIONS: Array<{
 ];
 
 const AUTO_SAVE_DELAY_MS = 900;
+const PLUTO_VOICE_SELECTION_STORAGE_KEY =
+    'agent-companion.pluto-voice-selection';
+
+type PlutoVoiceSelection = {
+    sessionId: string | null;
+    clientId: string | null;
+};
 
 export function App() {
     const mode = (document.body.dataset.mode as Mode | undefined) ?? 'desktop';
@@ -135,7 +142,7 @@ export function App() {
     >({});
     const [activeVoiceSessionId, setActiveVoiceSessionId] = useState<
         string | null
-    >(null);
+    >(() => readPlutoVoiceSelection().sessionId);
     const [showSetupGuide, setShowSetupGuide] = useState(false);
     const [showFullAccessConfirm, setShowFullAccessConfirm] = useState(false);
     const [currentView, setCurrentView] = useState<
@@ -145,6 +152,10 @@ export function App() {
         typeof globalThis.setTimeout
     > | null>(null);
     const draftVersionRef = useRef(0);
+    const plutoVoiceSessions = bootstrap?.runner.plutoVoiceSessions ?? [];
+    const activeVoiceSessionClientId = activeVoiceSessionId
+        ? (localSessionClients[activeVoiceSessionId] ?? null)
+        : null;
 
     function replaceDraftConfig(nextConfig: AgentCompanionConfig | null) {
         draftDirtyRef.current = false;
@@ -195,6 +206,23 @@ export function App() {
     }
 
     useEffect(() => {
+        const persistedSelection = readPlutoVoiceSelection();
+        if (persistedSelection.sessionId && persistedSelection.clientId) {
+            setLocalSessionClients((current) => ({
+                ...current,
+                [persistedSelection.sessionId!]: persistedSelection.clientId!,
+            }));
+        }
+    }, []);
+
+    useEffect(() => {
+        writePlutoVoiceSelection({
+            sessionId: activeVoiceSessionId,
+            clientId: activeVoiceSessionClientId,
+        });
+    }, [activeVoiceSessionClientId, activeVoiceSessionId]);
+
+    useEffect(() => {
         void fetchBootstrap();
 
         const streamPath =
@@ -224,6 +252,21 @@ export function App() {
     }, [apiBase, desktopToken, mode]);
 
     useEffect(() => {
+        if (
+            activeVoiceSessionId &&
+            !plutoVoiceSessions.some(
+                (session) => session.id === activeVoiceSessionId,
+            )
+        ) {
+            setActiveVoiceSessionId(null);
+            writePlutoVoiceSelection({
+                sessionId: null,
+                clientId: null,
+            });
+        }
+    }, [activeVoiceSessionId, plutoVoiceSessions]);
+
+    useEffect(() => {
         if (!draftConfig || !draftDirtyRef.current) {
             return;
         }
@@ -250,10 +293,6 @@ export function App() {
 
     const activity = bootstrap?.runner.activity ?? [];
     const approvals = bootstrap?.runner.approvals ?? [];
-    const plutoVoiceSessions = bootstrap?.runner.plutoVoiceSessions ?? [];
-    const activeVoiceSessionClientId = activeVoiceSessionId
-        ? localSessionClients[activeVoiceSessionId] ?? null
-        : null;
     const desktopBridge = globalThis.window?.agentCompanion;
     const canBrowseDirectories =
         typeof desktopBridge?.selectDirectory === 'function';
@@ -640,6 +679,9 @@ export function App() {
                                                         localSessionClients[
                                                             session.id
                                                         ] ?? null;
+                                                    const isSelectedSession =
+                                                        session.id ===
+                                                        activeVoiceSessionId;
                                                     const sessionBusyKey =
                                                         plutoSessionActionPending ===
                                                             session.id ||
@@ -663,7 +705,12 @@ export function App() {
                                                     return (
                                                         <div
                                                             key={session.id}
-                                                            className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                                                            className={cn(
+                                                                'rounded-2xl border bg-white/5 p-4 transition-colors',
+                                                                isSelectedSession
+                                                                    ? 'border-emerald-400/60 bg-emerald-500/10 ring-1 ring-emerald-400/40'
+                                                                    : 'border-white/10',
+                                                            )}>
                                                             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                                                 <div className="space-y-2">
                                                                     <div className="flex flex-wrap items-center gap-2">
@@ -739,21 +786,11 @@ export function App() {
                                         )}
                                     </div>
 
-                                    <PlutoVoiceSessionConsole
-                                        apiBase={apiBase}
-                                        desktopToken={desktopToken}
-                                        sessionId={activeVoiceSessionId}
-                                        clientId={activeVoiceSessionClientId}
-                                        sessions={plutoVoiceSessions}
-                                        onError={(message) => setError(message)}
-                                        onInfo={(message) => {
-                                            setStatusMessage(message);
-                                            globalThis.setTimeout(
-                                                () => setStatusMessage(null),
-                                                2500,
-                                            );
-                                        }}
-                                    />
+                                    <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-black/20 p-3 text-xs text-slate-400">
+                                        {activeVoiceSessionId
+                                            ? 'The selected Pluto session now lives directly beside Pluto in the overlay. Use Record there.'
+                                            : 'Pick a Pluto session and it will light up here and open beside Pluto in the overlay.'}
+                                    </div>
                                 </div>
                             </CardContent>
                         </Card>
@@ -1425,9 +1462,7 @@ export function App() {
                 'POST',
                 {
                     label:
-                        mode === 'admin'
-                            ? 'Remote Admin'
-                            : 'Desktop Companion',
+                        mode === 'admin' ? 'Remote Admin' : 'Desktop Companion',
                     platform: desktopBridge?.platform ?? mode,
                     requestedRole: session.speakerClientId
                         ? 'observer'
@@ -1786,6 +1821,9 @@ function OverlayView({
     bootstrap: Bootstrap | null;
     desktopToken?: string;
 }) {
+    const [voiceSelection, setVoiceSelection] = useState<PlutoVoiceSelection>(
+        () => readPlutoVoiceSelection(),
+    );
     const [frameTime, setFrameTime] = useState(() => Date.now());
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [msgStartTime, setMsgStartTime] = useState(0);
@@ -1814,6 +1852,7 @@ function OverlayView({
         distance: 9999,
         near: false,
     };
+    const plutoVoiceSessions = bootstrap?.runner.plutoVoiceSessions ?? [];
 
     const avatarState: 'idle' | 'working' | 'alert' | 'offline' =
         !runnerRunning || !isConnected
@@ -1828,6 +1867,17 @@ function OverlayView({
         plutoPending ||
         (latestActivity?.type === 'tool_call' && recentAgeMs < 1_600);
     const lastPlayedMessageRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        const syncSelection = () => {
+            setVoiceSelection(readPlutoVoiceSelection());
+        };
+
+        globalThis.addEventListener('storage', syncSelection);
+        return () => {
+            globalThis.removeEventListener('storage', syncSelection);
+        };
+    }, []);
 
     useEffect(() => {
         if (activePlutoMessage?.id && activePlutoMessage.id !== lastMsgId) {
@@ -2083,6 +2133,20 @@ function OverlayView({
                             </strong>
                         </div>
                         <p>{streamedText}</p>
+                    </div>
+                ) : null}
+                {voiceSelection.sessionId ? (
+                    <div className="pet-bubble passive max-w-88 overflow-hidden">
+                        <PlutoVoiceSessionConsole
+                            apiBase="/api/desktop"
+                            desktopToken={desktopToken}
+                            sessionId={voiceSelection.sessionId}
+                            clientId={voiceSelection.clientId}
+                            sessions={plutoVoiceSessions}
+                            variant="overlay"
+                            onError={() => undefined}
+                            onInfo={() => undefined}
+                        />
                     </div>
                 ) : null}
                 <button
@@ -2411,4 +2475,48 @@ function derivePathLabel(inputPath: string) {
     }
     const parts = normalized.split(/[\\/]/).filter(Boolean);
     return parts.at(-1) ?? normalized;
+}
+
+function readPlutoVoiceSelection(): PlutoVoiceSelection {
+    if (typeof globalThis.localStorage === 'undefined') {
+        return {
+            sessionId: null,
+            clientId: null,
+        };
+    }
+
+    try {
+        const raw = globalThis.localStorage.getItem(
+            PLUTO_VOICE_SELECTION_STORAGE_KEY,
+        );
+        if (!raw) {
+            return {
+                sessionId: null,
+                clientId: null,
+            };
+        }
+        const parsed = JSON.parse(raw) as PlutoVoiceSelection;
+        return {
+            sessionId:
+                typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
+            clientId:
+                typeof parsed.clientId === 'string' ? parsed.clientId : null,
+        };
+    } catch {
+        return {
+            sessionId: null,
+            clientId: null,
+        };
+    }
+}
+
+function writePlutoVoiceSelection(selection: PlutoVoiceSelection) {
+    if (typeof globalThis.localStorage === 'undefined') {
+        return;
+    }
+
+    globalThis.localStorage.setItem(
+        PLUTO_VOICE_SELECTION_STORAGE_KEY,
+        JSON.stringify(selection),
+    );
 }

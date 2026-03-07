@@ -22,10 +22,23 @@ const plutoOrchestrator = new PlutoOrchestrator(runnerBridge, capturePrimaryDisp
 const tunnelManager = new TunnelManager(env.CLOUDFLARED_BIN, env.CLOUDFLARED_CONFIG_PATH);
 const userStore = new UserStore(env.USER_STORE_PATH);
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
-const preloadPath = [
-  path.join(currentDir, "../preload/index.js"),
-  path.join(currentDir, "../preload/index.ts"),
-].find((candidate) => fs.existsSync(candidate));
+
+function resolvePreloadPath() {
+  const candidates = [
+    path.join(currentDir, "../preload/index.cjs"),
+    path.join(currentDir, "../preload/index.js"),
+    path.join(process.cwd(), "src/preload/index.cjs"),
+    path.join(process.cwd(), "dist/main/preload/index.js"),
+    path.join(process.cwd(), "dist/preload/index.js"),
+  ];
+
+  const preload = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!preload) {
+    throw new Error(`Unable to resolve preload script. Tried: ${candidates.join(", ")}`);
+  }
+
+  return preload;
+}
 
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -142,6 +155,7 @@ async function bootstrap() {
 
 function createWindows() {
   debugLog("windows:create:start");
+  const preloadPath = resolvePreloadPath();
   mainWindow = new BrowserWindow({
     width: 1240,
     height: 860,
