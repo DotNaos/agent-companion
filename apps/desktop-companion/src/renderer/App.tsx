@@ -88,215 +88,348 @@ export function App() {
   }
 
   return (
-    <div className={`app-shell ${mode}`}>
-      <header className="hero">
-        <div>
-          <p className="eyebrow">agent-companion</p>
-          <h1>{mode === "admin" ? "Remote Admin" : "Desktop Companion"}</h1>
-          <p className="lede">
-            Secure relay visibility, path permissions, command policy, and approval control for the local runner.
-          </p>
+    <div className={cn("min-h-screen w-full bg-slate-950 text-slate-50 font-sans selection:bg-emerald-500/30", mode)}>
+      <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-slate-950/80 px-6 backdrop-blur-md">
+        <div className="flex items-center gap-4">
+          <div className="flex flex-col">
+            <span className="text-xs font-semibold tracking-wider text-emerald-400 uppercase">agent-companion</span>
+            <h1 className="text-xl font-bold tracking-tight">{mode === "admin" ? "Remote Admin" : "Desktop Companion"}</h1>
+          </div>
+          <Badge variant="outline" className="ml-2 border-white/10 text-slate-400">
+            {bootstrap?.desktop.runnerRunning ? (bootstrap?.runner.status.connectedToRemote ? "Connected" : "Starting") : "Offline"}
+          </Badge>
         </div>
-        <div className="hero-actions">
-          <Button variant="secondary" onClick={() => setShowSetupGuide(true)}>
-            Open Setup Guide
+        
+        <div className="flex items-center gap-3">
+          <Button variant="secondary" size="sm" onClick={() => setShowSetupGuide(true)}>
+            Setup Guide
           </Button>
           {mode === "admin" ? (
-            <a className={buttonVariants({ variant: "secondary" })} href="/auth/login/google">
-              Sign In With Google
-            </a>
-          ) : null}
-          {mode === "admin" ? (
-            <Button
-              variant="ghost"
-              onClick={async () => {
-                await fetch("/auth/logout", { method: "POST" });
-                window.location.href = "/login";
-              }}
-            >
-              Sign Out
-            </Button>
+            <>
+              <a className={buttonVariants({ variant: "secondary", size: "sm" })} href="/auth/login/google">
+                Switch Account
+              </a>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  await fetch("/auth/logout", { method: "POST" });
+                  window.location.href = "/login";
+                }}
+              >
+                Sign Out
+              </Button>
+            </>
           ) : null}
         </div>
       </header>
 
-      {error ? <div className="banner error">{error}</div> : null}
-      {statusMessage ? <div className="banner">{statusMessage}</div> : null}
-      {!bootstrap?.desktop.tunnelRunning || !bootstrap?.desktop.publicMcpUrl ? (
-        <div className="banner info">
-          Finish the ChatGPT MCP setup before linking the app in ChatGPT.
-          <Button variant="ghost" size="sm" className="inline-action" onClick={() => setShowSetupGuide(true)}>
-            View steps
-          </Button>
-        </div>
-      ) : null}
+      <main className="container mx-auto max-w-5xl py-8 px-4 grid gap-8">
+        {error && (
+          <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
+            {error}
+          </div>
+        )}
+        {statusMessage && (
+          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-200">
+            {statusMessage}
+          </div>
+        )}
+        {(!bootstrap?.desktop.tunnelRunning || !bootstrap?.desktop.publicMcpUrl) && (
+          <div className="flex items-center justify-between rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-blue-200">
+            <span>Finish the ChatGPT MCP setup before linking the app in ChatGPT.</span>
+            <Button variant="ghost" size="sm" className="h-8 text-blue-300 hover:text-blue-100 hover:bg-blue-500/20" onClick={() => setShowSetupGuide(true)}>
+              View steps
+            </Button>
+          </div>
+        )}
 
-      <section className="summary-grid">
-        <MetricCard
-          title="Runner"
-          value={
-            bootstrap?.desktop.runnerRunning
-              ? bootstrap?.runner.status.connectedToRemote
-                ? "Connected"
-                : "Starting"
-              : "Offline"
-          }
-        />
-        <MetricCard
-          title="Tunnel"
-          value={bootstrap?.desktop.tunnelRunning ? "Running" : "Stopped"}
-          actionLabel={bootstrap?.desktop.tunnelRunning ? "Stop Tunnel" : "Start Tunnel"}
-          onAction={toggleTunnel}
-        />
-      </section>
-
-      <div className="layout-grid">
-        <section className="panel config-panel">
-          <PanelHeader title="Permission Model" subtitle="Projects root, manual path grants, task allowlists, and run_command policy." />
-          {draftConfig ? (
-            <>
-              <label className="field">
-                <span>Projects Root</span>
-                <Input
-                  value={draftConfig.projectsRoot ?? ""}
-                  onChange={(event) =>
-                    setDraftConfig({ ...draftConfig, projectsRoot: event.target.value || null })
-                  }
-                  placeholder="/Users/you/projects"
-                />
-              </label>
-
-              <h3>Allowed Paths</h3>
-              <div className="stack">
-                {draftConfig.allowedPaths.map((entry) => (
-                  <div key={entry.id} className="path-card">
-                    <div className="path-card-top">
-                      <Input
-                        value={entry.label}
-                        onChange={(event) => updatePathEntry(entry.id, { label: event.target.value })}
-                      />
-                      <Button variant="ghost" onClick={() => removePathEntry(entry.id)}>
-                        Remove
-                      </Button>
-                    </div>
-                    <Input
-                      value={entry.path}
-                      onChange={(event) => updatePathEntry(entry.id, { path: event.target.value })}
-                      placeholder="/absolute/path"
-                    />
-                    <div className="toggle-row">
-                      {CAPABILITIES.map((capability) => (
-                        <label key={capability} className="toggle">
-                          <input
-                            type="checkbox"
-                            checked={entry.capabilities[capability]}
-                            onChange={(event) =>
-                              updatePathEntry(entry.id, {
-                                capabilities: {
-                                  ...entry.capabilities,
-                                  [capability]: event.target.checked,
-                                },
-                              })
-                            }
-                          />
-                          <span>{capability}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                <Button variant="secondary" onClick={addPathEntry}>
-                  Add Allowed Path
-                </Button>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-400">Runner Status</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold">
+                {bootstrap?.desktop.runnerRunning
+                  ? bootstrap?.runner.status.connectedToRemote
+                    ? "Connected"
+                    : "Starting"
+                  : "Offline"}
               </div>
-
-              <EditorList
-                title="Allowed Repo Tasks"
-                items={draftConfig.tasks}
-                onChange={(tasks) => setDraftConfig({ ...draftConfig, tasks })}
-              />
-              <EditorList
-                title="Allowed Dev Server Tasks"
-                items={draftConfig.devServerTasks}
-                onChange={(devServerTasks) => setDraftConfig({ ...draftConfig, devServerTasks })}
-              />
-              <RunCommandRulesEditor
-                rules={draftConfig.runCommandRules}
-                onChange={(runCommandRules) => setDraftConfig({ ...draftConfig, runCommandRules })}
-              />
-              <label className="field">
-                <span>Allowed Remote Admin Origins</span>
-                <Textarea
-                  rows={3}
-                  value={draftConfig.auth.allowedOrigins.join("\n")}
-                  onChange={(event) =>
-                    setDraftConfig({
-                      ...draftConfig,
-                      auth: {
-                        ...draftConfig.auth,
-                        allowedOrigins: event.target.value.split("\n").map((value) => value.trim()).filter(Boolean),
-                      },
-                    })
-                  }
-                />
-              </label>
-
-              <Button onClick={saveConfig}>
-                Save Configuration
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-sm font-medium text-slate-400">Tunnel Status</CardTitle>
+            </CardHeader>
+            <CardContent className="flex items-center justify-between">
+              <div className="text-2xl font-semibold">
+                {bootstrap?.desktop.tunnelRunning ? "Running" : "Stopped"}
+              </div>
+              <Button 
+                variant={bootstrap?.desktop.tunnelRunning ? "outline" : "default"} 
+                size="sm" 
+                onClick={toggleTunnel}
+              >
+                {bootstrap?.desktop.tunnelRunning ? "Stop Tunnel" : "Start Tunnel"}
               </Button>
-            </>
-          ) : (
-            <p className="muted">
-              {bootstrap?.desktop.runnerRunning
-                ? "Runner is starting. Configuration will appear once the local service answers."
-                : (bootstrap?.desktop.runnerLastError ?? "Runner is offline. Start it from the Runner card above.")}
-            </p>
-          )}
-        </section>
+            </CardContent>
+          </Card>
+        </div>
 
-        <section className="panel approvals-panel">
-          <PanelHeader title="Pending Approvals" subtitle="Approve once, deny, or persist the requested permission." />
-          <div className="stack">
-            {approvals.length === 0 ? <p className="muted">No approvals are waiting.</p> : null}
-            {approvals.map((approval) => (
-              <div key={approval.id} className="approval-card">
-                <div>
-                  <strong>{approval.toolName}</strong>
-                  <p>{approval.summary}</p>
-                </div>
-                <pre>{JSON.stringify(approval.payload, null, 2)}</pre>
-                <div className="action-row">
-                  <Button onClick={() => decideApproval(approval.id, "approved", false)}>
-                    Approve Once
-                  </Button>
-                  <Button variant="secondary" onClick={() => decideApproval(approval.id, "approved", true)}>
-                    Approve + Remember
-                  </Button>
-                  <Button variant="ghost" onClick={() => decideApproval(approval.id, "denied", false)}>
-                    Deny
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+        <Tabs defaultValue="permissions" className="w-full">
+          <TabsList className="mb-6 h-12 w-full justify-start rounded-xl border border-white/5 bg-slate-900/50 p-1">
+            <TabsTrigger value="permissions" className="rounded-lg px-6 data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-300">
+              Permissions
+            </TabsTrigger>
+            <TabsTrigger value="approvals" className="rounded-lg px-6 data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-300 flex items-center gap-2">
+              Approvals 
+              {approvals.length > 0 && (
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-[10px] font-bold text-slate-950">
+                  {approvals.length}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="activity" className="rounded-lg px-6 data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-300">
+              Live Activity
+            </TabsTrigger>
+          </TabsList>
 
-        <section className="panel activity-panel">
-          <PanelHeader title="Live Activity" subtitle="Auth, tool calls, writes, command execution, and process lifecycle events." />
-          <div className="activity-feed">
-            {activity.slice().reverse().map((entry) => (
-              <article key={entry.id} className={`activity-entry ${entry.level}`}>
-                <div className="activity-head">
-                  <span>{entry.type}</span>
-                  <time>{new Date(entry.timestamp).toLocaleTimeString()}</time>
-                </div>
-                <p>{entry.message}</p>
-                {Object.keys(entry.data).length > 0 ? <pre>{JSON.stringify(entry.data, null, 2)}</pre> : null}
-              </article>
-            ))}
-          </div>
-        </section>
-      </div>
+          <TabsContent value="permissions" className="focus-visible:outline-none focus-visible:ring-0">
+            <div className="grid gap-6">
+              {draftConfig ? (
+                <>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Projects Root</CardTitle>
+                      <CardDescription>Base directory for your workspace and development</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Input
+                        value={draftConfig.projectsRoot ?? ""}
+                        onChange={(event) =>
+                          setDraftConfig({ ...draftConfig, projectsRoot: event.target.value || null })
+                        }
+                        placeholder="/Users/you/projects"
+                        className="max-w-xl"
+                      />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle>Allowed Paths</CardTitle>
+                          <CardDescription>Explicitly grant access to specific paths in the system</CardDescription>
+                        </div>
+                        <Button variant="secondary" onClick={addPathEntry} size="sm">
+                          Add Path
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="grid gap-4">
+                      {draftConfig.allowedPaths.length === 0 ? (
+                        <p className="text-sm text-slate-400">No paths allowed yet.</p>
+                      ) : (
+                        draftConfig.allowedPaths.map((entry) => (
+                          <div key={entry.id} className="rounded-xl border border-white/10 bg-slate-900/50 p-4">
+                            <div className="mb-4 flex items-start gap-4">
+                              <div className="grid flex-1 gap-2">
+                                <Input
+                                  value={entry.label}
+                                  onChange={(event) => updatePathEntry(entry.id, { label: event.target.value })}
+                                  placeholder="Alias/Label"
+                                  className="h-9 bg-slate-900 focus:ring-emerald-300/20"
+                                />
+                                <Input
+                                  value={entry.path}
+                                  onChange={(event) => updatePathEntry(entry.id, { path: event.target.value })}
+                                  placeholder="/absolute/path"
+                                  className="h-9 bg-slate-900 font-mono text-sm focus:ring-emerald-300/20"
+                                />
+                              </div>
+                              <Button variant="ghost" size="icon" onClick={() => removePathEntry(entry.id)} className="text-slate-400 hover:text-red-400">
+                                ✕
+                              </Button>
+                            </div>
+                            <div className="flex flex-wrap gap-4 pt-4 mt-2 border-t border-white/5">
+                              {CAPABILITIES.map((capability) => (
+                                <div key={capability} className="flex items-center space-x-2">
+                                  <Checkbox
+                                    id={`cap-${entry.id}-${capability}`}
+                                    checked={entry.capabilities[capability]}
+                                    onCheckedChange={(checked) =>
+                                      updatePathEntry(entry.id, {
+                                        capabilities: {
+                                          ...entry.capabilities,
+                                          [capability]: checked === true,
+                                        },
+                                      })
+                                    }
+                                  />
+                                  <Label htmlFor={`cap-${entry.id}-${capability}`} className="text-xs font-normal text-slate-300 cursor-pointer">
+                                    {capability}
+                                  </Label>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <EditorList
+                    title="Allowed Repo Tasks"
+                    items={draftConfig.tasks}
+                    onChange={(tasks) => setDraftConfig({ ...draftConfig, tasks })}
+                  />
+                  <EditorList
+                    title="Allowed Dev Server Tasks"
+                    items={draftConfig.devServerTasks}
+                    onChange={(devServerTasks) => setDraftConfig({ ...draftConfig, devServerTasks })}
+                  />
+                  <RunCommandRulesEditor
+                    rules={draftConfig.runCommandRules}
+                    onChange={(runCommandRules) => setDraftConfig({ ...draftConfig, runCommandRules })}
+                  />
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Allowed Remote Admin Origins</CardTitle>
+                      <CardDescription>CORS allowed origins</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Textarea
+                        rows={3}
+                        value={draftConfig.auth.allowedOrigins.join("\n")}
+                        onChange={(event) =>
+                          setDraftConfig({
+                            ...draftConfig,
+                            auth: {
+                              ...draftConfig.auth,
+                              allowedOrigins: event.target.value.split("\n").map((value) => value.trim()).filter(bool => bool),
+                            },
+                          })
+                        }
+                        className="font-mono text-sm focus:ring-emerald-300/20"
+                      />
+                    </CardContent>
+                  </Card>
+
+                  <div className="flex justify-end pt-4 pb-12">
+                    <Button onClick={saveConfig} size="default" className="w-full sm:w-auto">
+                      Save Configuration
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <Card>
+                  <CardContent className="py-12 text-center text-slate-400">
+                    {bootstrap?.desktop.runnerRunning
+                      ? "Runner is starting. Configuration will appear once the local service answers."
+                      : (bootstrap?.desktop.runnerLastError ?? "Runner is offline. Start it from the Runner card above.")}
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="approvals" className="focus-visible:outline-none focus-visible:ring-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>Pending Approvals</CardTitle>
+                <CardDescription>Approve once, deny, or persist the requested permission.</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                {approvals.length === 0 ? (
+                  <div className="rounded-xl border border-white/5 bg-slate-900/30 p-8 text-center text-slate-400">
+                    No approvals are waiting.
+                  </div>
+                ) : (
+                  approvals.map((approval) => (
+                    <div key={approval.id} className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
+                      <div className="mb-4">
+                        <h4 className="text-lg font-semibold text-emerald-300">{approval.toolName}</h4>
+                        <p className="text-sm text-slate-300 mt-1">{approval.summary}</p>
+                      </div>
+                      <ScrollArea className="h-32 w-full rounded-lg bg-black/40 p-3 mb-5 border border-white/5">
+                        <pre className="text-xs font-mono text-slate-400 break-words whitespace-pre-wrap">
+                          {JSON.stringify(approval.payload, null, 2)}
+                        </pre>
+                      </ScrollArea>
+                      <div className="flex flex-wrap gap-3">
+                        <Button onClick={() => decideApproval(approval.id, "approved", false)}>
+                          Approve Once
+                        </Button>
+                        <Button variant="secondary" onClick={() => decideApproval(approval.id, "approved", true)}>
+                          Approve + Remember
+                        </Button>
+                        <Button variant="ghost" onClick={() => decideApproval(approval.id, "denied", false)} className="hover:bg-red-500/10 hover:text-red-400">
+                          Deny
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="activity" className="focus-visible:outline-none focus-visible:ring-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>Live Activity</CardTitle>
+                <CardDescription>Auth, tool calls, writes, command execution, and process lifecycle events.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[600px] w-full rounded-xl border border-white/5 bg-slate-900/30 p-4">
+                  <div className="flex flex-col gap-3">
+                    {activity.slice().reverse().map((entry) => (
+                      <article key={entry.id} className={cn(
+                        "rounded-lg border border-white/5 p-4 transition-colors",
+                        entry.level === "error" ? "bg-red-500/5 border-red-500/20" : "bg-white/[0.02] hover:bg-white/[0.04]"
+                      )}>
+                        <div className="flex items-center justify-between mb-2">
+                          <Badge variant="outline" className={cn(
+                            "border-white/10 font-mono text-[10px]",
+                            entry.level === "error" ? "text-red-400 border-red-400/30" : "text-emerald-400"
+                          )}>
+                            {entry.type}
+                          </Badge>
+                          <time className="text-xs text-slate-500 font-mono">
+                            {new Date(entry.timestamp).toLocaleTimeString()}
+                          </time>
+                        </div>
+                        <p className={cn(
+                          "text-sm break-words", 
+                          entry.level === "error" ? "text-red-200" : "text-slate-200"
+                        )}>
+                          {entry.message}
+                        </p>
+                        {Object.keys(entry.data).length > 0 && (
+                          <div className="mt-3 rounded bg-black/40 p-2 overflow-x-auto">
+                            <pre className="text-[11px] font-mono text-slate-400 break-words whitespace-pre-wrap">
+                              {JSON.stringify(entry.data, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </article>
+                    ))}
+                    {activity.length === 0 && (
+                      <div className="text-center py-12 text-slate-500">
+                        No activity recorded yet.
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </main>
 
       {showSetupGuide ? (
         <SetupGuideModal
@@ -1167,39 +1300,6 @@ function LoginView() {
   );
 }
 
-function MetricCard({
-  title,
-  value,
-  actionLabel,
-  onAction,
-}: {
-  title: string;
-  value: string;
-  actionLabel?: string;
-  onAction?: () => void | Promise<void>;
-}) {
-  return (
-    <Card className="metric-card">
-      <span>{title}</span>
-      <strong>{value}</strong>
-      {actionLabel && onAction ? (
-        <Button variant="secondary" className="metric-action" onClick={() => void onAction()}>
-          {actionLabel}
-        </Button>
-      ) : null}
-    </Card>
-  );
-}
-
-function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <header className="panel-header">
-      <h2>{title}</h2>
-      <p>{subtitle}</p>
-    </header>
-  );
-}
-
 function EditorList({
   title,
   items,
@@ -1210,54 +1310,62 @@ function EditorList({
   onChange: (items: AgentCompanionConfig["tasks"]) => void;
 }) {
   return (
-    <section className="editor-list">
-      <h3>{title}</h3>
-      {items.map((task) => (
-        <div key={task.id} className="editor-row">
-          <Input
-            value={task.label}
-            onChange={(event) =>
-              onChange(items.map((entry) => (entry.id === task.id ? { ...entry, label: event.target.value } : entry)))
-            }
-            placeholder="Label"
-          />
-          <Input
-            value={task.command.join(" ")}
-            onChange={(event) =>
-              onChange(
-                items.map((entry) =>
-                  entry.id === task.id
-                    ? { ...entry, command: event.target.value.split(" ").map((part) => part.trim()).filter(Boolean) }
-                    : entry,
-                ),
-              )
-            }
-            placeholder="npm run build"
-          />
-          <Button variant="ghost" onClick={() => onChange(items.filter((entry) => entry.id !== task.id))}>
-            Remove
-          </Button>
-        </div>
-      ))}
-      <Button
-        variant="secondary"
-        onClick={() =>
-          onChange([
-            ...items,
-            {
-              id: crypto.randomUUID(),
-              label: "New task",
-              command: ["npm", "run", "build"],
-              managed: false,
-              timeoutMs: 60000,
-              outputLimitBytes: 32000,
-            },
-          ])
-        }
-      >
-        Add Task
-      </Button>
-    </section>
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {items.map((task) => (
+          <div key={task.id} className="flex items-center gap-3">
+            <Input
+              value={task.label}
+              onChange={(event) =>
+                onChange(items.map((entry) => (entry.id === task.id ? { ...entry, label: event.target.value } : entry)))
+              }
+              placeholder="Label"
+              className="w-1/3 h-9 focus:ring-emerald-300/20"
+            />
+            <Input
+              value={task.command.join(" ")}
+              onChange={(event) =>
+                onChange(
+                  items.map((entry) =>
+                    entry.id === task.id
+                      ? { ...entry, command: event.target.value.split(" ").map((part) => part.trim()).filter(bool => bool) }
+                      : entry,
+                  ),
+                )
+              }
+              placeholder="npm run build"
+              className="flex-1 font-mono text-sm h-9 focus:ring-emerald-300/20"
+            />
+            <Button variant="ghost" size="icon" onClick={() => onChange(items.filter((entry) => entry.id !== task.id))} className="text-slate-400 hover:text-red-400 shrink-0">
+              ✕
+            </Button>
+          </div>
+        ))}
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-2 w-fit hover:bg-slate-800"
+          onClick={() =>
+            onChange([
+              ...items,
+              {
+                id: crypto.randomUUID(),
+                label: "New task",
+                command: ["npm", "run", "build"],
+                managed: false,
+                timeoutMs: 60000,
+                outputLimitBytes: 32000,
+              },
+            ])
+          }
+        >
+          Add Task
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1269,65 +1377,74 @@ function RunCommandRulesEditor({
   onChange: (rules: AgentCompanionConfig["runCommandRules"]) => void;
 }) {
   return (
-    <section className="editor-list">
-      <h3>`run_command` Policy</h3>
-      {rules.map((rule) => (
-        <div key={rule.id} className="editor-row">
-          <Input
-            value={rule.label}
-            onChange={(event) =>
-              onChange(rules.map((entry) => (entry.id === rule.id ? { ...entry, label: event.target.value } : entry)))
-            }
-            placeholder="Label"
-          />
-          <Input
-            value={rule.command.join(" ")}
-            onChange={(event) =>
-              onChange(
-                rules.map((entry) =>
-                  entry.id === rule.id
-                    ? { ...entry, command: event.target.value.split(" ").map((part) => part.trim()).filter(Boolean) }
-                    : entry,
-                ),
-              )
-            }
-            placeholder="git status"
-          />
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={rule.approvalRequired}
+    <Card>
+      <CardHeader>
+        <CardTitle>\`run_command\` Policy</CardTitle>
+        <CardDescription>Rules to bypass or enforce approvals for specific shell commands</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        {rules.map((rule) => (
+          <div key={rule.id} className="flex items-center gap-3">
+            <Input
+              value={rule.label}
+              onChange={(event) =>
+                onChange(rules.map((entry) => (entry.id === rule.id ? { ...entry, label: event.target.value } : entry)))
+              }
+              placeholder="Label"
+              className="w-1/4 h-9 focus:ring-emerald-300/20"
+            />
+            <Input
+              value={rule.command.join(" ")}
               onChange={(event) =>
                 onChange(
                   rules.map((entry) =>
-                    entry.id === rule.id ? { ...entry, approvalRequired: event.target.checked } : entry,
+                    entry.id === rule.id
+                      ? { ...entry, command: event.target.value.split(" ").map((part) => part.trim()).filter(bool => bool) }
+                      : entry,
                   ),
                 )
               }
+              placeholder="git status"
+              className="flex-1 font-mono text-sm h-9 focus:ring-emerald-300/20"
             />
-            <span>Needs approval</span>
-          </label>
-          <Button variant="ghost" onClick={() => onChange(rules.filter((entry) => entry.id !== rule.id))}>
-            Remove
-          </Button>
-        </div>
-      ))}
-      <Button
-        variant="secondary"
-        onClick={() =>
-          onChange([
-            ...rules,
-            {
-              id: crypto.randomUUID(),
-              label: "New command rule",
-              command: ["git", "status"],
-              approvalRequired: true,
-            },
-          ])
-        }
-      >
-        Add Rule
-      </Button>
-    </section>
+            <div className="flex items-center gap-2 shrink-0 px-2 pl-4">
+              <Switch
+                id={`rule-approval-${rule.id}`}
+                checked={rule.approvalRequired}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    rules.map((entry) =>
+                      entry.id === rule.id ? { ...entry, approvalRequired: checked } : entry,
+                    ),
+                  )
+                }
+              />
+              <Label htmlFor={`rule-approval-${rule.id}`} className="text-xs text-slate-300 cursor-pointer">Needs approval</Label>
+            </div>
+            <Button variant="ghost" size="icon" onClick={() => onChange(rules.filter((entry) => entry.id !== rule.id))} className="text-slate-400 hover:text-red-400 shrink-0">
+              ✕
+            </Button>
+          </div>
+        ))}
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-2 w-fit hover:bg-slate-800"
+          onClick={() =>
+            onChange([
+              ...rules,
+              {
+                id: crypto.randomUUID(),
+                label: "New command rule",
+                command: ["git", "status"],
+                approvalRequired: true,
+              },
+            ])
+          }
+        >
+          Add Rule
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
