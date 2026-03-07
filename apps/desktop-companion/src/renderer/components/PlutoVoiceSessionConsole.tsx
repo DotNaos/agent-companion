@@ -30,6 +30,9 @@ type Props = Readonly<{
     onInfo: (message: string) => void;
 }>;
 
+const PLUTO_AUDIO_INPUT_STORAGE_KEY = 'agent-companion.pluto-audio-input';
+const PLUTO_AUDIO_OUTPUT_STORAGE_KEY = 'agent-companion.pluto-audio-output';
+
 export function PlutoVoiceSessionConsole({
     apiBase,
     desktopToken,
@@ -47,12 +50,25 @@ export function PlutoVoiceSessionConsole({
     const [timeline, setTimeline] = useState<VoiceTimelineEntry[]>([]);
     const [isRecording, setIsRecording] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
+    const [availableInputs, setAvailableInputs] = useState<MediaDeviceInfo[]>(
+        [],
+    );
+    const [availableOutputs, setAvailableOutputs] = useState<
+        MediaDeviceInfo[]
+    >([]);
+    const [selectedInputId, setSelectedInputId] = useState<string | null>(() =>
+        readAudioDevicePreference(PLUTO_AUDIO_INPUT_STORAGE_KEY),
+    );
+    const [selectedOutputId, setSelectedOutputId] = useState<string | null>(
+        () => readAudioDevicePreference(PLUTO_AUDIO_OUTPUT_STORAGE_KEY),
+    );
     const socketRef = useRef<WebSocket | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const scheduledPlaybackTimeRef = useRef(0);
     const playbackSourcesRef = useRef(0);
     const fallbackAudioRef = useRef<HTMLAudioElement | null>(null);
+    const outputRoutingWarningShownRef = useRef(false);
 
     const selectedSummary = useMemo(
         () => sessions.find((entry) => entry.id === sessionId) ?? null,
@@ -70,6 +86,68 @@ export function PlutoVoiceSessionConsole({
     const roleLabel = getRoleLabel(isSpeaker, Boolean(clientId));
     const visibleTimeline = isOverlay ? timeline.slice(-4) : timeline;
     const descriptionText = getDescriptionText(Boolean(sessionId), isOverlay);
+    const canEnumerateDevices = Boolean(
+        globalThis.navigator?.mediaDevices?.enumerateDevices,
+    );
+    const canRouteOutputDevice = supportsOutputDeviceSelection();
+
+    useEffect(() => {
+        void refreshAudioDevices();
+
+        const mediaDevices = globalThis.navigator?.mediaDevices;
+        if (!mediaDevices?.addEventListener) {
+            return undefined;
+        }
+
+        const handleDeviceChange = () => {
+            void refreshAudioDevices();
+        };
+
+        mediaDevices.addEventListener('devicechange', handleDeviceChange);
+        return () => {
+            mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+        };
+    }, []);
+
+    useEffect(() => {
+        writeAudioDevicePreference(
+            PLUTO_AUDIO_INPUT_STORAGE_KEY,
+            selectedInputId,
+        );
+    }, [selectedInputId]);
+
+    useEffect(() => {
+        writeAudioDevicePreference(
+            PLUTO_AUDIO_OUTPUT_STORAGE_KEY,
+            selectedOutputId,
+        );
+    }, [selectedOutputId]);
+
+    useEffect(() => {
+        outputRoutingWarningShownRef.current = false;
+
+        const globalState = globalThis as typeof globalThis & {
+            _plutoVoiceAudioCtx?: AudioContext;
+        };
+
+        if (globalState._plutoVoiceAudioCtx) {
+            void applyOutputDeviceToAudioContext(
+                globalState._plutoVoiceAudioCtx,
+                selectedOutputId,
+                onInfo,
+                outputRoutingWarningShownRef,
+            );
+        }
+
+        if (fallbackAudioRef.current) {
+            void applyOutputDeviceToAudioElement(
+                fallbackAudioRef.current,
+                selectedOutputId,
+                onInfo,
+                outputRoutingWarningShownRef,
+            );
+        }
+    }, [onInfo, selectedOutputId]);
 
     useEffect(() => {
         setSession(null);
@@ -150,10 +228,14 @@ export function PlutoVoiceSessionConsole({
         }
 
         try {
+            const audioConstraints = selectedInputId
+                ? { deviceId: { exact: selectedInputId } }
+                : true;
             const stream = await navigator.mediaDevices.getUserMedia({
-                audio: true,
+                audio: audioConstraints,
             });
             mediaStreamRef.current = stream;
+            void refreshAudioDevices();
             const mimeType = pickRecordingMimeType();
             const recorder = mimeType
                 ? new MediaRecorder(stream, { mimeType })
@@ -308,6 +390,13 @@ export function PlutoVoiceSessionConsole({
             return;
         }
 
+        await applyOutputDeviceToAudioContext(
+            ctx,
+            selectedOutputId,
+            onInfo,
+            outputRoutingWarningShownRef,
+        );
+
         const sampleRate = parseSampleRate(mimeType, 24_000);
         const bytes = decodeBase64(base64);
         const frameCount = Math.floor(bytes.length / 2);
@@ -368,6 +457,12 @@ export function PlutoVoiceSessionConsole({
         fallbackAudioRef.current?.pause();
         const audio = new Audio(objectUrl);
         fallbackAudioRef.current = audio;
+        await applyOutputDeviceToAudioElement(
+            audio,
+            selectedOutputId,
+            onInfo,
+            outputRoutingWarningShownRef,
+        );
         audio.addEventListener('play', () => {
             setIsPlaying(true);
             if (plutoAudioState) {
@@ -421,6 +516,34 @@ export function PlutoVoiceSessionConsole({
         mediaStreamRef.current = null;
     }
 
+    async function refreshAudioDevices() {
+        if (!globalThis.navigator?.mediaDevices?.enumerateDevices) {
+            return;
+        }
+
+        try {
+            const devices = await globalThis.navigator.mediaDevices.enumerateDevices();
+            const inputs = devices
+                .filter((device) => device.kind === 'audioinput')
+                .filter(isSelectableDevice);
+            const outputs = devices
+                .filter((device) => device.kind === 'audiooutput')
+                .filter(isSelectableDevice);
+
+            setAvailableInputs(inputs);
+            setAvailableOutputs(outputs);
+            setSelectedInputId((current) =>
+                normalizeAudioDeviceSelection(current, inputs),
+            );
+            setSelectedOutputId((current) =>
+                normalizeAudioDeviceSelection(current, outputs),
+            );
+        } catch {
+            // Device enumeration can fail before permissions exist; the voice
+            // controls still work with the system default devices.
+        }
+    }
+
     return (
         <div
             className={
@@ -472,6 +595,33 @@ export function PlutoVoiceSessionConsole({
                 </Button>
                 <span className="text-xs text-slate-400">{recordingHint}</span>
             </div>
+
+            {canEnumerateDevices ? (
+                <AudioDeviceControls
+                    isOverlay={isOverlay}
+                    availableInputs={availableInputs}
+                    availableOutputs={availableOutputs}
+                    selectedInputId={selectedInputId}
+                    selectedOutputId={selectedOutputId}
+                    canRouteOutputDevice={canRouteOutputDevice}
+                    onSelectInput={(nextValue) => {
+                        setSelectedInputId(nextValue);
+                        onInfo(
+                            nextValue
+                                ? 'Microphone preference updated for Pluto voice chat.'
+                                : 'Microphone set to the system default input.',
+                        );
+                    }}
+                    onSelectOutput={(nextValue) => {
+                        setSelectedOutputId(nextValue);
+                        onInfo(
+                            nextValue
+                                ? 'Playback device preference updated for Pluto voice chat.'
+                                : 'Playback set to the system default output.',
+                        );
+                    }}
+                />
+            ) : null}
 
             <div
                 className={
@@ -723,4 +873,219 @@ function timelineToneClass(entryTone: VoiceTimelineEntry['tone']) {
         return 'text-xs font-semibold text-cyan-300';
     }
     return 'text-xs font-semibold text-slate-300';
+}
+
+function AudioDeviceControls({
+    isOverlay,
+    availableInputs,
+    availableOutputs,
+    selectedInputId,
+    selectedOutputId,
+    canRouteOutputDevice,
+    onSelectInput,
+    onSelectOutput,
+}: Readonly<{
+    isOverlay: boolean;
+    availableInputs: MediaDeviceInfo[];
+    availableOutputs: MediaDeviceInfo[];
+    selectedInputId: string | null;
+    selectedOutputId: string | null;
+    canRouteOutputDevice: boolean;
+    onSelectInput: (deviceId: string | null) => void;
+    onSelectOutput: (deviceId: string | null) => void;
+}>) {
+    const containerClassName = isOverlay
+        ? 'grid gap-2 rounded-2xl border border-white/10 bg-black/20 p-3'
+        : 'mt-4 grid gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 md:grid-cols-2';
+    const noteClassName = isOverlay
+        ? 'text-[11px] text-amber-300/90'
+        : 'text-xs text-amber-300/90 md:col-span-2';
+
+    return (
+        <div className={containerClassName}>
+            <label className="grid gap-1.5 text-xs text-slate-400">
+                <span className="font-medium text-slate-200">Microphone</span>
+                <select
+                    value={selectedInputId ?? 'default'}
+                    onChange={(event) => {
+                        const nextValue = event.target.value;
+                        onSelectInput(
+                            nextValue === 'default' ? null : nextValue,
+                        );
+                    }}
+                    className="h-10 rounded-xl border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none transition focus:border-white/30">
+                    <option value="default">System default</option>
+                    {availableInputs.map((device, index) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                            {formatAudioDeviceLabel(
+                                device,
+                                index,
+                                'Microphone',
+                            )}
+                        </option>
+                    ))}
+                </select>
+            </label>
+
+            <label className="grid gap-1.5 text-xs text-slate-400">
+                <span className="font-medium text-slate-200">
+                    Headphones / speakers
+                </span>
+                <select
+                    value={selectedOutputId ?? 'default'}
+                    onChange={(event) => {
+                        const nextValue = event.target.value;
+                        onSelectOutput(
+                            nextValue === 'default' ? null : nextValue,
+                        );
+                    }}
+                    disabled={!canRouteOutputDevice}
+                    className="h-10 rounded-xl border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none transition focus:border-white/30 disabled:cursor-not-allowed disabled:opacity-60">
+                    <option value="default">System default</option>
+                    {availableOutputs.map((device, index) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                            {formatAudioDeviceLabel(device, index, 'Output')}
+                        </option>
+                    ))}
+                </select>
+            </label>
+
+            {canRouteOutputDevice ? null : (
+                <p className={noteClassName}>
+                    This Electron runtime currently routes Pluto playback
+                    through the system default output only.
+                </p>
+            )}
+        </div>
+    );
+}
+
+function isSelectableDevice(device: MediaDeviceInfo) {
+    return device.deviceId !== 'default' && device.deviceId !== 'communications';
+}
+
+function normalizeAudioDeviceSelection(
+    current: string | null,
+    devices: MediaDeviceInfo[],
+) {
+    if (!current) {
+        return null;
+    }
+    return devices.some((device) => device.deviceId === current)
+        ? current
+        : null;
+}
+
+function formatAudioDeviceLabel(
+    device: MediaDeviceInfo,
+    index: number,
+    fallbackPrefix: string,
+) {
+    const label = device.label.trim();
+    if (label) {
+        return label;
+    }
+    return `${fallbackPrefix} ${index + 1}`;
+}
+
+function readAudioDevicePreference(storageKey: string) {
+    if (globalThis.localStorage === undefined) {
+        return null;
+    }
+
+    try {
+        const stored = globalThis.localStorage.getItem(storageKey);
+        return stored && stored.length > 0 ? stored : null;
+    } catch {
+        return null;
+    }
+}
+
+function writeAudioDevicePreference(
+    storageKey: string,
+    deviceId: string | null,
+) {
+    if (globalThis.localStorage === undefined) {
+        return;
+    }
+
+    try {
+        if (deviceId) {
+            globalThis.localStorage.setItem(storageKey, deviceId);
+            return;
+        }
+        globalThis.localStorage.removeItem(storageKey);
+    } catch {
+        // Ignore persistence issues and keep the in-memory selection.
+    }
+}
+
+function supportsOutputDeviceSelection() {
+    const audioElementPrototype =
+        globalThis.HTMLMediaElement?.prototype as
+            | (HTMLMediaElement & {
+                  setSinkId?: (sinkId: string) => Promise<void>;
+              })
+            | undefined;
+    const audioContextPrototype =
+        globalThis.AudioContext?.prototype as
+            | (AudioContext & {
+                  setSinkId?: (sinkId: string) => Promise<void>;
+              })
+            | undefined;
+
+    return Boolean(
+        audioElementPrototype?.setSinkId || audioContextPrototype?.setSinkId,
+    );
+}
+
+async function applyOutputDeviceToAudioContext(
+    ctx: AudioContext,
+    deviceId: string | null,
+    onInfo: (message: string) => void,
+    warningShownRef: { current: boolean },
+) {
+    const contextWithSink = ctx as AudioContext & {
+        sinkId?: string;
+        setSinkId?: (sinkId: string) => Promise<void>;
+    };
+    const targetDeviceId = deviceId ?? 'default';
+
+    if (contextWithSink.setSinkId) {
+        if (contextWithSink.sinkId !== targetDeviceId) {
+            await contextWithSink.setSinkId(targetDeviceId);
+        }
+        return;
+    }
+
+    if (deviceId && !warningShownRef.current) {
+        warningShownRef.current = true;
+        onInfo(
+            'Playback device selection is not supported here; Pluto will use the system default output.',
+        );
+    }
+}
+
+async function applyOutputDeviceToAudioElement(
+    audio: HTMLAudioElement,
+    deviceId: string | null,
+    onInfo: (message: string) => void,
+    warningShownRef: { current: boolean },
+) {
+    const audioWithSink = audio as HTMLAudioElement & {
+        setSinkId?: (sinkId: string) => Promise<void>;
+    };
+    const targetDeviceId = deviceId ?? 'default';
+
+    if (audioWithSink.setSinkId) {
+        await audioWithSink.setSinkId(targetDeviceId);
+        return;
+    }
+
+    if (deviceId && !warningShownRef.current) {
+        warningShownRef.current = true;
+        onInfo(
+            'Playback device selection is not supported here; Pluto will use the system default output.',
+        );
+    }
 }
