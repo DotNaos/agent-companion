@@ -2,6 +2,9 @@ import {
     AppError,
     agentCompanionConfigSchema,
     approvalDecisionSchema,
+  plutoVoiceSessionAttachInputSchema,
+  plutoVoiceSessionDetachInputSchema,
+  plutoVoiceSessionCreateInputSchema,
     toErrorEnvelope,
 } from "@agent-companion/shared";
 import cookieParser from "cookie-parser";
@@ -126,6 +129,37 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
       next(error);
     }
   });
+  app.post("/api/desktop/pluto/sessions", requireDesktopToken(desktopToken), async (req, res, next) => {
+    try {
+      const input = plutoVoiceSessionCreateInputSchema.parse(req.body ?? {});
+      res.status(201).json(await runnerBridge.createPlutoVoiceSession(input));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/desktop/pluto/sessions/:sessionId/attach", requireDesktopToken(desktopToken), async (req, res, next) => {
+    try {
+      const input = plutoVoiceSessionAttachInputSchema.parse(req.body ?? {});
+      res.json(await runnerBridge.attachPlutoVoiceSession(getRouteParam(req.params.sessionId), input));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/desktop/pluto/sessions/:sessionId/detach", requireDesktopToken(desktopToken), async (req, res, next) => {
+    try {
+      const input = plutoVoiceSessionDetachInputSchema.parse(req.body ?? {});
+      res.json(await runnerBridge.detachPlutoVoiceSession(getRouteParam(req.params.sessionId), input));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/desktop/pluto/sessions/:sessionId/close", requireDesktopToken(desktopToken), async (req, res, next) => {
+    try {
+      res.json(await runnerBridge.closePlutoVoiceSession(getRouteParam(req.params.sessionId)));
+    } catch (error) {
+      next(error);
+    }
+  });
   app.put("/api/desktop/config", requireDesktopToken(desktopToken), async (req, res, next) => {
     try {
       const config = agentCompanionConfigSchema.parse(req.body);
@@ -185,6 +219,37 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
     try {
       const contextHint = typeof req.body?.contextHint === "string" ? req.body.contextHint : undefined;
       res.json(await plutoOrchestrator.requestCommentary(contextHint));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/admin/pluto/sessions", async (req, res, next) => {
+    try {
+      const input = plutoVoiceSessionCreateInputSchema.parse(req.body ?? {});
+      res.status(201).json(await runnerBridge.createPlutoVoiceSession(input));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/admin/pluto/sessions/:sessionId/attach", async (req, res, next) => {
+    try {
+      const input = plutoVoiceSessionAttachInputSchema.parse(req.body ?? {});
+      res.json(await runnerBridge.attachPlutoVoiceSession(getRouteParam(req.params.sessionId), input));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/admin/pluto/sessions/:sessionId/detach", async (req, res, next) => {
+    try {
+      const input = plutoVoiceSessionDetachInputSchema.parse(req.body ?? {});
+      res.json(await runnerBridge.detachPlutoVoiceSession(getRouteParam(req.params.sessionId), input));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/admin/pluto/sessions/:sessionId/close", async (req, res, next) => {
+    try {
+      res.json(await runnerBridge.closePlutoVoiceSession(getRouteParam(req.params.sessionId)));
     } catch (error) {
       next(error);
     }
@@ -295,6 +360,10 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
       });
     },
   };
+}
+
+function getRouteParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
 function buildBootstrap(

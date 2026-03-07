@@ -5,11 +5,36 @@ import {
     approvalDecisionSchema,
     approvalRequestSchema,
     plutoCommentaryInputSchema,
+    plutoVoiceSessionAttachInputSchema,
+    plutoVoiceSessionAttachOutputSchema,
+    plutoVoiceSessionCloseOutputSchema,
+    plutoVoiceSessionCreateInputSchema,
+    plutoVoiceSessionCreateOutputSchema,
+    plutoVoiceSessionDetachInputSchema,
+    plutoVoiceSessionDetachOutputSchema,
+    plutoVoiceSessionSummarySchema,
     plutoStateSchema,
     runnerStatusSchema,
 } from "@agent-companion/shared";
 import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
+import type { RawData } from "ws";
+
+function decodeWebSocketMessage(data: RawData) {
+  if (typeof data === "string") {
+    return data;
+  }
+
+  if (data instanceof Buffer) {
+    return data.toString("utf8");
+  }
+
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString("utf8");
+  }
+
+  return Buffer.from(new Uint8Array(data)).toString("utf8");
+}
 
 export interface RunnerSnapshot {
   status: ReturnType<typeof runnerStatusSchema.parse>;
@@ -17,6 +42,7 @@ export interface RunnerSnapshot {
   activity: Array<ReturnType<typeof activityEventSchema.parse>>;
   approvals: Array<ReturnType<typeof approvalRequestSchema.parse>>;
   pluto: ReturnType<typeof plutoStateSchema.parse>;
+  plutoVoiceSessions: Array<ReturnType<typeof plutoVoiceSessionSummarySchema.parse>>;
 }
 
 export class RunnerBridge extends EventEmitter {
@@ -44,6 +70,7 @@ export class RunnerBridge extends EventEmitter {
       activeMessage: null,
       history: [],
     }),
+    plutoVoiceSessions: [],
   };
 
   constructor(private readonly baseUrl: string) {
@@ -64,7 +91,7 @@ export class RunnerBridge extends EventEmitter {
       this.emit("snapshot", this.getSnapshot());
     });
     this.socket.on("message", (data) => {
-      const message = JSON.parse(data.toString("utf8")) as {
+      const message = JSON.parse(decodeWebSocketMessage(data)) as {
         type: string;
         data: unknown;
       };
@@ -87,6 +114,11 @@ export class RunnerBridge extends EventEmitter {
         case "pluto":
           this.snapshot.pluto = plutoStateSchema.parse(message.data);
           break;
+        case "pluto_voice_sessions":
+          this.snapshot.plutoVoiceSessions = (message.data as unknown[]).map((entry) =>
+            plutoVoiceSessionSummarySchema.parse(entry),
+          );
+          break;
       }
       this.emit("snapshot", this.getSnapshot());
     });
@@ -108,12 +140,13 @@ export class RunnerBridge extends EventEmitter {
   }
 
   async refresh() {
-    const [status, config, activity, approvals, pluto] = await Promise.all([
+    const [status, config, activity, approvals, pluto, plutoVoiceSessions] = await Promise.all([
       this.fetchJson("/internal/status"),
       this.fetchJson("/internal/config"),
       this.fetchJson(`/internal/activity?limit=${DEFAULT_ACTIVITY_LIMIT}`),
       this.fetchJson("/internal/approvals"),
       this.fetchJson("/internal/pluto"),
+      this.fetchJson("/internal/pluto/sessions"),
     ]);
 
     this.snapshot = {
@@ -124,6 +157,9 @@ export class RunnerBridge extends EventEmitter {
         approvalRequestSchema.parse(entry),
       ),
       pluto: plutoStateSchema.parse(pluto),
+      plutoVoiceSessions: ((plutoVoiceSessions as { sessions: unknown[] }).sessions ?? []).map((entry) =>
+        plutoVoiceSessionSummarySchema.parse(entry),
+      ),
     };
     this.emit("snapshot", this.getSnapshot());
   }
@@ -170,6 +206,49 @@ export class RunnerBridge extends EventEmitter {
       contentType: response.headers.get("content-type") ?? "audio/wav",
       buffer: Buffer.from(await response.arrayBuffer()),
     };
+  }
+
+  async createPlutoVoiceSession(input: unknown) {
+    const payload = plutoVoiceSessionCreateInputSchema.parse(input);
+    const response = await this.postJson("/internal/pluto/sessions", payload);
+    if (!response.ok) {
+      throw new Error(`Pluto voice session create failed with ${response.status}`);
+    }
+    const result = plutoVoiceSessionCreateOutputSchema.parse(await response.json());
+    await this.refresh();
+    return result;
+  }
+
+  async attachPlutoVoiceSession(sessionId: string, input: unknown) {
+    const payload = plutoVoiceSessionAttachInputSchema.parse(input);
+    const response = await this.postJson(`/internal/pluto/sessions/${encodeURIComponent(sessionId)}/attach`, payload);
+    if (!response.ok) {
+      throw new Error(`Pluto voice session attach failed with ${response.status}`);
+    }
+    const result = plutoVoiceSessionAttachOutputSchema.parse(await response.json());
+    await this.refresh();
+    return result;
+  }
+
+  async detachPlutoVoiceSession(sessionId: string, input: unknown) {
+    const payload = plutoVoiceSessionDetachInputSchema.parse(input);
+    const response = await this.postJson(`/internal/pluto/sessions/${encodeURIComponent(sessionId)}/detach`, payload);
+    if (!response.ok) {
+      throw new Error(`Pluto voice session detach failed with ${response.status}`);
+    }
+    const result = plutoVoiceSessionDetachOutputSchema.parse(await response.json());
+    await this.refresh();
+    return result;
+  }
+
+  async closePlutoVoiceSession(sessionId: string) {
+    const response = await this.postJson(`/internal/pluto/sessions/${encodeURIComponent(sessionId)}/close`, {});
+    if (!response.ok) {
+      throw new Error(`Pluto voice session close failed with ${response.status}`);
+    }
+    const result = plutoVoiceSessionCloseOutputSchema.parse(await response.json());
+    await this.refresh();
+    return result;
   }
 
   private async fetchJson(pathname: string) {

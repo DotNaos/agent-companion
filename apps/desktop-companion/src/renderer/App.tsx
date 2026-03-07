@@ -4,6 +4,7 @@ import type {
     ApprovalRequest,
     PlutoMessage,
     PlutoState,
+    PlutoVoiceSessionSummary,
     RunnerStatus,
 } from '@agent-companion/shared';
 import {
@@ -48,6 +49,7 @@ type Bootstrap = {
         activity: ActivityEvent[];
         approvals: ApprovalRequest[];
         pluto: PlutoState;
+        plutoVoiceSessions: PlutoVoiceSessionSummary[];
     };
     desktop: {
         runnerRunning: boolean;
@@ -122,6 +124,9 @@ export function App() {
     const [error, setError] = useState<string | null>(null);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [plutoTriggerPending, setPlutoTriggerPending] = useState(false);
+    const [plutoSessionActionPending, setPlutoSessionActionPending] = useState<
+        string | null
+    >(null);
     const [showSetupGuide, setShowSetupGuide] = useState(false);
     const [showFullAccessConfirm, setShowFullAccessConfirm] = useState(false);
     const [currentView, setCurrentView] = useState<
@@ -236,6 +241,7 @@ export function App() {
 
     const activity = bootstrap?.runner.activity ?? [];
     const approvals = bootstrap?.runner.approvals ?? [];
+    const plutoVoiceSessions = bootstrap?.runner.plutoVoiceSessions ?? [];
     const desktopBridge = globalThis.window?.agentCompanion;
     const canBrowseDirectories =
         typeof desktopBridge?.selectDirectory === 'function';
@@ -475,90 +481,217 @@ export function App() {
                                 <CardTitle className="text-lg">Pluto</CardTitle>
                                 <CardDescription>
                                     Local secretary mode with Gemini-based
-                                    commentary and optional spoken updates.
+                                    commentary plus the first shared voice-session
+                                    registry for desktop and future mobile clients.
                                 </CardDescription>
                             </CardHeader>
-                            <CardContent className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                                <div className="flex flex-wrap gap-2">
-                                    <Badge
-                                        variant="secondary"
-                                        className="bg-black/40 text-slate-300 border-white/10">
-                                        {bootstrap?.runner.pluto.available
-                                            ? 'Gemini ready'
-                                            : 'Gemini offline'}
-                                    </Badge>
-                                    <Badge
-                                        variant="secondary"
-                                        className="bg-black/40 text-slate-300 border-white/10">
-                                        {draftConfig?.pluto.muted
-                                            ? 'Muted'
-                                            : 'Voice on'}
-                                    </Badge>
-                                    <Badge
-                                        variant="secondary"
-                                        className="bg-black/40 text-slate-300 border-white/10">
-                                        {draftConfig?.pluto
-                                            .autoCommentaryEnabled
-                                            ? `Auto every ${Math.round((draftConfig.pluto.commentaryIntervalMs ?? 30_000) / 1000)}s`
-                                            : 'Auto commentary off'}
-                                    </Badge>
-                                </div>
-                                <div className="flex flex-wrap gap-3">
-                                    <Button
-                                        size="sm"
-                                        onClick={() =>
-                                            void triggerPlutoCommentary()
-                                        }
-                                        disabled={
-                                            plutoTriggerPending ||
-                                            !bootstrap?.runner.pluto
-                                                .available ||
-                                            bootstrap?.runner.pluto.pending
-                                        }>
-                                        {plutoTriggerPending
-                                            ? 'Pluto kommentiert…'
-                                            : 'Trigger commentary'}
-                                    </Button>
-                                    <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={() =>
-                                            updateDraftConfig((current) => ({
-                                                ...current,
-                                                pluto: {
-                                                    ...current.pluto,
-                                                    muted: !current.pluto.muted,
-                                                },
-                                            }))
-                                        }>
-                                        {draftConfig?.pluto.muted
-                                            ? 'Unmute Pluto'
-                                            : 'Mute Pluto'}
-                                    </Button>
-                                    <Button
-                                        variant={
-                                            draftConfig?.pluto
+                            <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+                                <div className="flex flex-col gap-4">
+                                    <div className="flex flex-wrap gap-2">
+                                        <Badge
+                                            variant="secondary"
+                                            className="bg-black/40 text-slate-300 border-white/10">
+                                            {bootstrap?.runner.pluto.available
+                                                ? 'Gemini ready'
+                                                : 'Gemini offline'}
+                                        </Badge>
+                                        <Badge
+                                            variant="secondary"
+                                            className="bg-black/40 text-slate-300 border-white/10">
+                                            {draftConfig?.pluto.muted
+                                                ? 'Muted'
+                                                : 'Voice on'}
+                                        </Badge>
+                                        <Badge
+                                            variant="secondary"
+                                            className="bg-black/40 text-slate-300 border-white/10">
+                                            {draftConfig?.pluto
                                                 .autoCommentaryEnabled
-                                                ? 'outline'
-                                                : 'default'
-                                        }
-                                        size="sm"
-                                        onClick={() =>
-                                            updateDraftConfig((current) => ({
-                                                ...current,
-                                                pluto: {
-                                                    ...current.pluto,
-                                                    autoCommentaryEnabled:
-                                                        !current.pluto
-                                                            .autoCommentaryEnabled,
-                                                },
-                                            }))
-                                        }>
-                                        {draftConfig?.pluto
-                                            .autoCommentaryEnabled
-                                            ? 'Pause commentary'
-                                            : 'Enable commentary'}
-                                    </Button>
+                                                ? `Auto every ${Math.round((draftConfig.pluto.commentaryIntervalMs ?? 30_000) / 1000)}s`
+                                                : 'Auto commentary off'}
+                                        </Badge>
+                                        <Badge
+                                            variant="secondary"
+                                            className="bg-black/40 text-slate-300 border-white/10">
+                                            {plutoVoiceSessions.length}{' '}
+                                            voice session
+                                            {plutoVoiceSessions.length === 1
+                                                ? ''
+                                                : 's'}
+                                        </Badge>
+                                    </div>
+                                    <div className="flex flex-wrap gap-3">
+                                        <Button
+                                            size="sm"
+                                            onClick={() =>
+                                                void triggerPlutoCommentary()
+                                            }
+                                            disabled={
+                                                plutoTriggerPending ||
+                                                !bootstrap?.runner.pluto
+                                                    .available ||
+                                                bootstrap?.runner.pluto.pending
+                                            }>
+                                            {plutoTriggerPending
+                                                ? 'Pluto kommentiert…'
+                                                : 'Trigger commentary'}
+                                        </Button>
+                                        <Button
+                                            variant="secondary"
+                                            size="sm"
+                                            onClick={() =>
+                                                updateDraftConfig((current) => ({
+                                                    ...current,
+                                                    pluto: {
+                                                        ...current.pluto,
+                                                        muted: !current.pluto.muted,
+                                                    },
+                                                }))
+                                            }>
+                                            {draftConfig?.pluto.muted
+                                                ? 'Unmute Pluto'
+                                                : 'Mute Pluto'}
+                                        </Button>
+                                        <Button
+                                            variant={
+                                                draftConfig?.pluto
+                                                    .autoCommentaryEnabled
+                                                    ? 'outline'
+                                                    : 'default'
+                                            }
+                                            size="sm"
+                                            onClick={() =>
+                                                updateDraftConfig((current) => ({
+                                                    ...current,
+                                                    pluto: {
+                                                        ...current.pluto,
+                                                        autoCommentaryEnabled:
+                                                            !current.pluto
+                                                                .autoCommentaryEnabled,
+                                                    },
+                                                }))
+                                            }>
+                                            {draftConfig?.pluto
+                                                .autoCommentaryEnabled
+                                                ? 'Pause commentary'
+                                                : 'Enable commentary'}
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-3xl border border-white/10 bg-black/20 p-4">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                            <h3 className="text-sm font-semibold text-slate-100">
+                                                Voice sessions
+                                            </h3>
+                                            <p className="mt-1 text-xs text-slate-400">
+                                                Start a shared Pluto conversation on desktop now;
+                                                iPhone and Watch clients can dock here later.
+                                            </p>
+                                        </div>
+                                        <Button
+                                            size="sm"
+                                            onClick={() =>
+                                                void createPlutoVoiceSession()
+                                            }
+                                            disabled={
+                                                plutoSessionActionPending ===
+                                                'create'
+                                            }>
+                                            {plutoSessionActionPending ===
+                                            'create'
+                                                ? 'Starting…'
+                                                : 'Start voice session'}
+                                        </Button>
+                                    </div>
+
+                                    <div className="mt-4 space-y-3">
+                                        {plutoVoiceSessions.length === 0 ? (
+                                            <div className="rounded-2xl border border-dashed border-white/10 bg-white/5 p-4 text-sm text-slate-400">
+                                                No live Pluto sessions yet. Time to give the tiny space gremlin a microphone.
+                                            </div>
+                                        ) : (
+                                            plutoVoiceSessions.map((session) => {
+                                                const sessionBusyKey =
+                                                    plutoSessionActionPending ===
+                                                        session.id ||
+                                                    plutoSessionActionPending ===
+                                                        `${session.id}:close`;
+                                                const joinButtonLabel =
+                                                    sessionBusyKey
+                                                        ? 'Working…'
+                                                        : session.speakerClientId
+                                                          ? 'Join as observer'
+                                                          : 'Join as speaker';
+
+                                                return (
+                                                    <div
+                                                        key={session.id}
+                                                        className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                                            <div className="space-y-2">
+                                                                <div className="flex flex-wrap items-center gap-2">
+                                                                    <span className="text-sm font-semibold text-slate-100">
+                                                                        {session.title ?? 'Untitled session'}
+                                                                    </span>
+                                                                    <Badge
+                                                                        variant="secondary"
+                                                                        className="bg-black/40 text-slate-300 border-white/10">
+                                                                        {formatSessionStatus(
+                                                                            session.status,
+                                                                        )}
+                                                                    </Badge>
+                                                                    <Badge
+                                                                        variant="secondary"
+                                                                        className="bg-black/40 text-slate-300 border-white/10">
+                                                                        {session.speakerClientId
+                                                                            ? 'Speaker attached'
+                                                                            : 'Open mic slot'}
+                                                                    </Badge>
+                                                                </div>
+                                                                <div className="text-xs text-slate-400">
+                                                                    Host: {session.host.label} · Last activity{' '}
+                                                                    {formatRelativeTime(
+                                                                        session.lastActivityAt,
+                                                                    )}
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="flex flex-wrap gap-2">
+                                                                <Button
+                                                                    variant="secondary"
+                                                                    size="sm"
+                                                                    onClick={() =>
+                                                                        void joinPlutoVoiceSession(
+                                                                            session,
+                                                                        )
+                                                                    }
+                                                                    disabled={
+                                                                        sessionBusyKey
+                                                                    }>
+                                                                    {joinButtonLabel}
+                                                                </Button>
+                                                                <Button
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    onClick={() =>
+                                                                        void closePlutoVoiceSession(
+                                                                            session.id,
+                                                                        )
+                                                                    }
+                                                                    disabled={
+                                                                        sessionBusyKey
+                                                                    }>
+                                                                    Close
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })
+                                        )}
+                                    </div>
                                 </div>
                             </CardContent>
                         </Card>
@@ -1173,6 +1306,79 @@ export function App() {
         }
     }
 
+    async function createPlutoVoiceSession() {
+        try {
+            setPlutoSessionActionPending('create');
+            await apiRequest('/pluto/sessions', 'POST', {
+                title: 'Desktop Pluto session',
+                client: {
+                    label:
+                        mode === 'admin'
+                            ? 'Remote Admin'
+                            : 'Desktop Companion',
+                    platform: desktopBridge?.platform ?? mode,
+                    requestedRole: 'speaker',
+                },
+            });
+            await fetchBootstrap();
+            setStatusMessage('Pluto voice session started. Mic glamour pending.');
+            setTimeout(() => setStatusMessage(null), 2500);
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error
+                    ? requestError.message
+                    : 'Pluto voice session creation failed',
+            );
+        } finally {
+            setPlutoSessionActionPending(null);
+        }
+    }
+
+    async function joinPlutoVoiceSession(session: PlutoVoiceSessionSummary) {
+        try {
+            setPlutoSessionActionPending(session.id);
+            await apiRequest(`/pluto/sessions/${session.id}/attach`, 'POST', {
+                label:
+                    mode === 'admin' ? 'Remote Admin' : 'Desktop Companion',
+                platform: desktopBridge?.platform ?? mode,
+                requestedRole: session.speakerClientId ? 'observer' : 'speaker',
+            });
+            await fetchBootstrap();
+            setStatusMessage(
+                session.speakerClientId
+                    ? 'Joined Pluto session as observer.'
+                    : 'Joined Pluto session as speaker.',
+            );
+            setTimeout(() => setStatusMessage(null), 2500);
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error
+                    ? requestError.message
+                    : 'Pluto voice session join failed',
+            );
+        } finally {
+            setPlutoSessionActionPending(null);
+        }
+    }
+
+    async function closePlutoVoiceSession(sessionId: string) {
+        try {
+            setPlutoSessionActionPending(`${sessionId}:close`);
+            await apiRequest(`/pluto/sessions/${sessionId}/close`, 'POST');
+            await fetchBootstrap();
+            setStatusMessage('Pluto voice session closed. Curtain gently falls.');
+            setTimeout(() => setStatusMessage(null), 2500);
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error
+                    ? requestError.message
+                    : 'Pluto voice session close failed',
+            );
+        } finally {
+            setPlutoSessionActionPending(null);
+        }
+    }
+
     async function apiRequest<T = unknown>(
         pathname: string,
         method: string,
@@ -1203,6 +1409,47 @@ export function App() {
         }
         return (await response.json()) as T;
     }
+}
+
+function formatSessionStatus(status: PlutoVoiceSessionSummary['status']) {
+    switch (status) {
+        case 'idle':
+            return 'Idle';
+        case 'listening':
+            return 'Listening';
+        case 'responding':
+            return 'Responding';
+        case 'error':
+            return 'Error';
+    }
+}
+
+function formatRelativeTime(timestamp: string) {
+    const deltaMs = Date.now() - new Date(timestamp).getTime();
+    if (!Number.isFinite(deltaMs) || deltaMs < 0) {
+        return 'just now';
+    }
+
+    const seconds = Math.floor(deltaMs / 1000);
+    if (seconds < 10) {
+        return 'just now';
+    }
+    if (seconds < 60) {
+        return `${seconds}s ago`;
+    }
+
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) {
+        return `${minutes}m ago`;
+    }
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+        return `${hours}h ago`;
+    }
+
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
 }
 
 function ConfirmFullAccessDialog({
