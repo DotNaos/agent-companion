@@ -35,7 +35,13 @@ export class TunnelManager extends EventEmitter {
     this.process.stderr.on("data", (chunk: Buffer) => {
       this.emit("log", chunk.toString("utf8").trimEnd());
     });
-    this.process.on("close", () => {
+    this.process.on("error", (error) => {
+      this.emit("log", `Failed to start cloudflared: ${error.message}`);
+      this.process = null;
+      this.emit("status", this.isRunning());
+    });
+    this.process.on("close", (code) => {
+      this.emit("log", `Cloudflared exited with code ${code}`);
       this.process = null;
       this.emit("status", this.isRunning());
     });

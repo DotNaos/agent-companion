@@ -111,6 +111,9 @@ importers:
       concurrently:
         specifier: ^9.2.1
         version: 9.2.1
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
       wait-on:
         specifier: ^9.0.4
         version: 9.0.4

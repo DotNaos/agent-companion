@@ -272,7 +272,7 @@ function buildBootstrap(
   return {
     runner: snapshot,
     desktop: {
-      runnerRunning: snapshot.status.connectedToRemote,
+      runnerRunning: runnerBridge.isConnected,
       runnerLastError: null,
       tunnelRunning: tunnelManager.isRunning(),
       publicAdminUrl: publicUrls.adminUrl,

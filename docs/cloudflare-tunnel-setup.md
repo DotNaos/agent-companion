@@ -35,8 +35,10 @@ export REMOTE_ADMIN_HOSTNAME=admin.example.com
 
 Default local origins:
 
-- MCP server: `http://127.0.0.1:8787`
-- admin interface: `http://127.0.0.1:4318`
+- MCP server: `http://127.0.0.1:${PORT:-8787}`
+- admin interface: `http://127.0.0.1:${DESKTOP_PORT:-4318}`
+
+The generator now reads the repo `.env` / `.env.local` first, so if you run the MCP server on a non-default port such as `8788`, the generated tunnel config will follow that automatically.
 
 ## Verify the Tunnel
 
@@ -69,10 +71,10 @@ Use `infra/cloudflare/systemd/agent-companion-local-runner.service` as a startin
 ## Troubleshooting
 
 - `cloudflared tunnel ingress validate` fails:
-  - check hostname spelling and local service URLs
+    - check hostname spelling and local service URLs
 - DNS route exists but hostname does not resolve:
-  - confirm the Cloudflare zone and tunnel are in the same account
+    - confirm the Cloudflare zone and tunnel are in the same account
 - remote admin loads but API calls fail with `403`:
-  - add the public admin origin to `config.auth.allowedOrigins`
+    - add the public admin origin to `config.auth.allowedOrigins`
 - remote admin loads but API calls fail with `401`:
-  - verify Google OAuth client config and session secret
+    - verify Google OAuth client config and session secret

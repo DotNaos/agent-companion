@@ -8,6 +8,7 @@ dist
 .env.op
 .env.op.local
 coverage
+.turbo
 *.log
 *.sqlite
 *.db

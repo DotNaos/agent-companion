@@ -18,6 +18,7 @@ export interface RunnerSnapshot {
 
 export class RunnerBridge extends EventEmitter {
   private socket: WebSocket | null = null;
+  private connected = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private snapshot: RunnerSnapshot = {
     status: runnerStatusSchema.parse({
@@ -35,11 +36,19 @@ export class RunnerBridge extends EventEmitter {
     super();
   }
 
+  get isConnected() {
+    return this.connected;
+  }
+
   async connect() {
     await this.refresh().catch(() => undefined);
     const streamUrl = new URL("/internal/stream", this.baseUrl);
     streamUrl.protocol = streamUrl.protocol === "https:" ? "wss:" : "ws:";
     this.socket = new WebSocket(streamUrl);
+    this.socket.on("open", () => {
+      this.connected = true;
+      this.emit("snapshot", this.getSnapshot());
+    });
     this.socket.on("message", (data) => {
       const message = JSON.parse(data.toString("utf8")) as {
         type: string;
@@ -65,11 +74,14 @@ export class RunnerBridge extends EventEmitter {
       this.emit("snapshot", this.getSnapshot());
     });
     this.socket.on("close", () => {
+      this.connected = false;
       this.snapshot.status.connectedToRemote = false;
       this.emit("snapshot", this.getSnapshot());
       this.scheduleReconnect();
     });
     this.socket.on("error", () => {
+      this.connected = false;
+      this.emit("snapshot", this.getSnapshot());
       this.scheduleReconnect();
     });
   }
