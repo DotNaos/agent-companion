@@ -1,13 +1,13 @@
+import type { AgentCompanionConfig } from "@agent-companion/shared";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { EventEmitter } from "node:events";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AgentCompanionConfig } from "@agent-companion/shared";
 import { signSession } from "./auth.js";
-import { createDesktopServer } from "./server.js";
 import type { DesktopEnv } from "./env.js";
+import { createDesktopServer } from "./server.js";
 import { UserStore } from "./user-store.js";
 
 const tempDirs: string[] = [];
@@ -94,6 +94,7 @@ function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
   const config = {
     version: 1 as const,
     projectsRoot: null,
+    mcpAccessMode: "default",
     allowedPaths: [],
     tasks: [],
     devServerTasks: [],

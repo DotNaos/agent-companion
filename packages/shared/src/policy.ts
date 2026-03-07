@@ -1,16 +1,48 @@
 import path from "node:path";
 import {
-  DEFAULT_COMMAND_TIMEOUT_MS,
-  DEFAULT_OUTPUT_LIMIT_BYTES,
-  SENSITIVE_TOOLS,
+    DEFAULT_COMMAND_TIMEOUT_MS,
+    DEFAULT_OUTPUT_LIMIT_BYTES,
+    SENSITIVE_TOOLS,
 } from "./constants.js";
 import type {
-  AgentCompanionConfig,
-  AllowedPath,
-  Capability,
-  TaskDefinition,
-  ToolName,
+    AgentCompanionConfig,
+    AllowedPath,
+    Capability,
+    MCPAccessMode,
+    TaskDefinition,
+    ToolName,
 } from "./schemas.js";
+
+const ACCESS_MODE_CAPABILITIES: Record<MCPAccessMode, Record<Capability, boolean>> = {
+  "read-only": {
+    read: true,
+    write: false,
+    search: true,
+    list: true,
+    "execute-tasks": false,
+    "run-command": false,
+  },
+  default: {
+    read: true,
+    write: true,
+    search: true,
+    list: true,
+    "execute-tasks": true,
+    "run-command": true,
+  },
+  "full-access": {
+    read: true,
+    write: true,
+    search: true,
+    list: true,
+    "execute-tasks": true,
+    "run-command": true,
+  },
+};
+
+function capabilitiesForAccessMode(mode: MCPAccessMode): Record<Capability, boolean> {
+  return { ...ACCESS_MODE_CAPABILITIES[mode] };
+}
 
 export class PolicyError extends Error {
   constructor(
@@ -38,6 +70,7 @@ export function isSubPath(parent: string, child: string): boolean {
 }
 
 export function listConfiguredRoots(config: AgentCompanionConfig): AllowedPath[] {
+  const capabilities = capabilitiesForAccessMode(config.mcpAccessMode);
   const roots = [...config.allowedPaths];
   if (config.projectsRoot) {
     roots.unshift({
@@ -46,17 +79,15 @@ export function listConfiguredRoots(config: AgentCompanionConfig): AllowedPath[]
       path: config.projectsRoot,
       kind: "projects",
       enabled: true,
-      capabilities: {
-        read: true,
-        write: true,
-        search: true,
-        list: true,
-        "execute-tasks": true,
-        "run-command": false,
-      },
+      capabilities,
     });
   }
-  return roots.filter((entry) => entry.enabled);
+  return roots
+    .filter((entry) => entry.enabled)
+    .map((entry) => ({
+      ...entry,
+      capabilities,
+    }));
 }
 
 export function getMatchingPathEntry(
@@ -125,9 +156,14 @@ export function findAllowedCommandRule(
   command: string[],
 ): { ruleId: string; approvalRequired: boolean } {
   assertPathCapability(config, workingDirectory, "run-command");
+  if (config.mcpAccessMode === "full-access") {
+    return { ruleId: "full-access", approvalRequired: false };
+  }
   const match = config.runCommandRules.find((rule) =>
-    rule.command.length === command.length &&
-    rule.command.every((part, index) => part === command[index]),
+    rule.matchMode === "prefix"
+      ? rule.command.every((part, index) => part === command[index])
+      : rule.command.length === command.length &&
+        rule.command.every((part, index) => part === command[index]),
   );
   if (!match) {
     throw new PolicyError("COMMAND_NOT_ALLOWED", "run_command is denied by default", {

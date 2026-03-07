@@ -1,21 +1,21 @@
 {
-  "name": "@agent-companion/remote-mcp-server",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
-  },
-  "dependencies": {
-    "@agent-companion/shared": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.27.1",
-    "express": "^5.1.0",
-    "jose": "^6.1.0",
-    "pino": "^10.0.0",
-    "ws": "^8.18.3"
-  }
+    "name": "@agent-companion/remote-mcp-server",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "dev": "node ../../scripts/free-dev-port.mjs 8788 remote-mcp-server && tsx watch src/index.ts",
+        "start": "tsx src/index.ts",
+        "test": "vitest run",
+        "typecheck": "tsc -p tsconfig.json --noEmit"
+    },
+    "dependencies": {
+        "@agent-companion/shared": "workspace:*",
+        "@modelcontextprotocol/sdk": "^1.27.1",
+        "express": "^5.1.0",
+        "jose": "^6.1.0",
+        "pino": "^10.0.0",
+        "ws": "^8.18.3"
+    }
 }

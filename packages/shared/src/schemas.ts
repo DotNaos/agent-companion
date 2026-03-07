@@ -3,6 +3,8 @@ import { CAPABILITIES, TOOL_NAMES } from "./constants.js";
 
 const capabilityEnum = z.enum(CAPABILITIES);
 
+export const mcpAccessModeSchema = z.enum(["read-only", "default", "full-access"]);
+
 export const capabilityFlagsSchema = z.object({
   read: z.boolean().default(false),
   write: z.boolean().default(false),
@@ -36,6 +38,7 @@ export const runCommandRuleSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   command: z.array(z.string().min(1)).min(1),
+  matchMode: z.enum(["exact", "prefix"]).default("exact"),
   approvalRequired: z.boolean().default(true),
 });
 
@@ -71,6 +74,7 @@ export const authConfigSchema = z.object({
 export const agentCompanionConfigSchema = z.object({
   version: z.literal(1).default(1),
   projectsRoot: z.string().nullable().default(null),
+  mcpAccessMode: mcpAccessModeSchema.default("default"),
   allowedPaths: z.array(allowedPathSchema).default([]),
   tasks: z.array(taskDefinitionSchema).default([]),
   devServerTasks: z.array(taskDefinitionSchema).default([]),
@@ -374,6 +378,7 @@ export const runnerStatusSchema = z.object({
 
 export type Capability = z.infer<typeof capabilityEnum>;
 export type CapabilityFlags = z.infer<typeof capabilityFlagsSchema>;
+export type MCPAccessMode = z.infer<typeof mcpAccessModeSchema>;
 export type ToolName = z.infer<typeof toolNameSchema>;
 export type AllowedPath = z.infer<typeof allowedPathSchema>;
 export type TaskDefinition = z.infer<typeof taskDefinitionSchema>;

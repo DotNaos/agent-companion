@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Free the renderer dev port if a stale node/electron process is still listening
+node ../../scripts/free-dev-port.mjs 5173 desktop-companion-vite
+
 # Start the Vite dev server for the renderer in the background
 vite --port 5173 --strictPort &
 VITE_PID=$!
@@ -8,10 +11,13 @@ VITE_PID=$!
 # Wait for Vite to be ready
 wait-on tcp:127.0.0.1:5173
 
+# Ensure the local Electron binary exists even if postinstall was skipped
+node ../../scripts/ensure-electron-install.mjs
+
 # Start Electron with tsx registered via NODE_OPTIONS
 export VITE_DEV_SERVER_URL=http://127.0.0.1:5173
 export NODE_OPTIONS="--import tsx"
-npx cross-env NODE_OPTIONS="--import tsx" electron . &
+pnpm exec cross-env NODE_OPTIONS="--import tsx" electron . &
 ELECTRON_PID=$!
 
 # If either process exits, kill the other

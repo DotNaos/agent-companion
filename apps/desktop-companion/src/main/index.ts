@@ -1,9 +1,10 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, screen } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { loadDesktopEnv } from "./env.js";
+import { fileURLToPath } from "node:url";
 import { CursorTracker } from "./cursor-tracker.js";
+import { loadDesktopEnv } from "./env.js";
 import { RunnerBridge } from "./runner-bridge.js";
 
 import { createDesktopServer } from "./server.js";
@@ -17,6 +18,11 @@ const runnerBridge = new RunnerBridge(`http://127.0.0.1:${env.LOCAL_RUNNER_PORT}
 
 const tunnelManager = new TunnelManager(env.CLOUDFLARED_BIN, env.CLOUDFLARED_CONFIG_PATH);
 const userStore = new UserStore(env.USER_STORE_PATH);
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+const preloadPath = [
+  path.join(currentDir, "../preload/index.js"),
+  path.join(currentDir, "../preload/index.ts"),
+].find((candidate) => fs.existsSync(candidate));
 
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -25,6 +31,20 @@ let isQuitting = false;
 const debugLogPath = path.join(process.cwd(), "tmp", "desktop-main.log");
 
 fs.mkdirSync(path.dirname(debugLogPath), { recursive: true });
+
+ipcMain.handle("agent-companion:select-directory", async () => {
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, {
+        properties: ["openDirectory", "createDirectory"],
+      })
+    : await dialog.showOpenDialog({
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled) {
+    return null;
+  }
+  return result.filePaths[0] ?? null;
+});
 
 function debugLog(message: string, details?: unknown) {
   const line = `[${new Date().toISOString()}] ${message}${details ? ` ${JSON.stringify(details)}` : ""}\n`;
@@ -97,6 +117,7 @@ function createWindows() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: preloadPath,
     },
   });
   debugLog("windows:main-created", { windowCount: BrowserWindow.getAllWindows().length });
@@ -147,6 +168,7 @@ function createWindows() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: preloadPath,
     },
   });
   debugLog("windows:overlay-created", { windowCount: BrowserWindow.getAllWindows().length });

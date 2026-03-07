@@ -1,10 +1,10 @@
+import { findAllowedCommandRule, type AgentCompanionConfig } from "@agent-companion/shared";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AgentCompanionConfig } from "@agent-companion/shared";
-import { RunnerState } from "./state.js";
 import type { RunnerEnv } from "./env.js";
+import { RunnerState } from "./state.js";
 
 const tempDirs: string[] = [];
 
@@ -61,6 +61,7 @@ describe("RunnerState", () => {
           id: "git-status",
           label: "git status",
           command: ["git", "status"],
+          matchMode: "exact",
           approvalRequired: false,
         },
       ],
@@ -181,7 +182,7 @@ describe("RunnerState", () => {
     expect(result.error?.details).toMatchObject({ escalatedFrom: "PATH_NOT_ALLOWED" });
   });
 
-  it("enforces per-path capability flags", async () => {
+  it("enforces read-only mode for write operations", async () => {
     const ctx = createContext();
     const workspace = path.join(ctx.dir, "workspace");
     const filePath = path.join(workspace, "note.txt");
@@ -189,6 +190,7 @@ describe("RunnerState", () => {
     fs.writeFileSync(filePath, "hello");
     ctx.setConfig({
       ...ctx.baseConfig,
+      mcpAccessMode: "read-only",
       allowedPaths: [manualPath("workspace", workspace, { read: true })],
     });
 
@@ -246,18 +248,20 @@ describe("RunnerState", () => {
     expect(result.error?.details).toMatchObject({ escalatedFrom: "COMMAND_NOT_ALLOWED" });
   });
 
-  it("denies run_command when the path lacks run-command permission", async () => {
+  it("denies run_command in read-only mode", async () => {
     const ctx = createContext();
     const workspace = path.join(ctx.dir, "workspace");
     fs.mkdirSync(workspace, { recursive: true });
     ctx.setConfig({
       ...ctx.baseConfig,
+      mcpAccessMode: "read-only",
       allowedPaths: [manualPath("workspace", workspace, { read: true })],
       runCommandRules: [
         {
           id: "git-status",
           label: "git status",
           command: ["git", "status"],
+          matchMode: "exact",
           approvalRequired: false,
         },
       ],
@@ -356,6 +360,58 @@ describe("RunnerState", () => {
 
     expect(result.ok).toBe(true);
     expect(result.data).toMatchObject({ content: "child" });
+  });
+
+  it("allows namespace-based command rules via prefix matching", async () => {
+    const ctx = createContext();
+    const workspace = path.join(ctx.dir, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+    const config: AgentCompanionConfig = {
+      ...ctx.baseConfig,
+      allowedPaths: [manualPath("workspace", workspace, { "run-command": true })],
+      approvalPolicy: {
+        toolApprovals: {
+          run_command: false,
+        },
+        alwaysRequireApprovalForSensitiveTools: false,
+      },
+      runCommandRules: [
+        {
+          id: "printf-prefix",
+          label: "printf namespace",
+          command: ["/usr/bin/printf"],
+          matchMode: "prefix",
+          approvalRequired: false,
+        },
+      ],
+    };
+
+    expect(
+      findAllowedCommandRule(config, workspace, ["/usr/bin/printf", "hello"]),
+    ).toMatchObject({ approvalRequired: false });
+  });
+
+  it("bypasses command allowlists in full-access mode", async () => {
+    const ctx = createContext();
+    const workspace = path.join(ctx.dir, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+    const config: AgentCompanionConfig = {
+      ...ctx.baseConfig,
+      mcpAccessMode: "full-access",
+      allowedPaths: [manualPath("workspace", workspace, { "run-command": true })],
+      approvalPolicy: {
+        toolApprovals: {
+          run_command: false,
+        },
+        alwaysRequireApprovalForSensitiveTools: false,
+      },
+      runCommandRules: [],
+    };
+
+    expect(findAllowedCommandRule(config, workspace, ["/bin/pwd"])).toMatchObject({
+      approvalRequired: false,
+      ruleId: "full-access",
+    });
   });
 });
 

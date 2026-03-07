@@ -1,47 +1,47 @@
+import {
+    AppError,
+    FileBackedStore,
+    activityEventSchema,
+    agentCompanionConfigSchema,
+    approvalDecisionSchema,
+    approvalRequestSchema,
+    assertPathCapability,
+    createProjectInputSchema,
+    createTodoListInputSchema,
+    findAllowedCommandRule,
+    findAllowedTask,
+    getExecutionLimits,
+    getLogsInputSchema,
+    listDirectoryInputSchema,
+    listTodoItemsInputSchema,
+    normalizeAbsolutePath,
+    readFileInputSchema,
+    relayRequestSchema,
+    requiresApproval,
+    resolveProjectPath,
+    runCommandInputSchema,
+    runRepoTaskInputSchema,
+    runnerStatusSchema,
+    searchFilesInputSchema,
+    startDevServerInputSchema,
+    stopDevServerInputSchema,
+    toErrorEnvelope,
+    toolInputSchemas,
+    updateTodoItemInputSchema,
+    writeFileInputSchema,
+    type ActivityEvent,
+    type AgentCompanionConfig,
+    type ApprovalDecision,
+    type ApprovalRequest,
+    type Capability,
+    type RelayRequest,
+    type ToolName,
+} from "@agent-companion/shared";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
-import { EventEmitter } from "node:events";
 import { z } from "zod";
-import {
-  AppError,
-  FileBackedStore,
-  activityEventSchema,
-  agentCompanionConfigSchema,
-  approvalDecisionSchema,
-  approvalRequestSchema,
-  assertPathCapability,
-  createProjectInputSchema,
-  createTodoListInputSchema,
-  findAllowedCommandRule,
-  findAllowedTask,
-  getLogsInputSchema,
-  getExecutionLimits,
-  listDirectoryInputSchema,
-  listTodoItemsInputSchema,
-  normalizeAbsolutePath,
-  readFileInputSchema,
-  relayRequestSchema,
-  requiresApproval,
-  resolveProjectPath,
-  runCommandInputSchema,
-  runRepoTaskInputSchema,
-  runnerStatusSchema,
-  searchFilesInputSchema,
-  startDevServerInputSchema,
-  stopDevServerInputSchema,
-  toolInputSchemas,
-  toErrorEnvelope,
-  updateTodoItemInputSchema,
-  writeFileInputSchema,
-  type ActivityEvent,
-  type AgentCompanionConfig,
-  type ApprovalDecision,
-  type ApprovalRequest,
-  type Capability,
-  type RelayRequest,
-  type ToolName,
-} from "@agent-companion/shared";
 import type { RunnerEnv } from "./env.js";
 import { ProcessManager } from "./process-manager.js";
 
@@ -97,6 +97,7 @@ export class RunnerState {
       () => ({
         version: 1,
         projectsRoot: null,
+        mcpAccessMode: "default",
         allowedPaths: [],
         tasks: [],
         devServerTasks: [],
@@ -283,23 +284,23 @@ export class RunnerState {
         const normalizedPath = normalizeAbsolutePath(target.path);
         const existing = current.allowedPaths.find((entry) => entry.path === normalizedPath);
         if (existing) {
-          existing.capabilities[target.capability] = true;
           existing.enabled = true;
+          existing.label ||= path.basename(normalizedPath) || normalizedPath;
           return current;
         }
         current.allowedPaths.push({
           id: randomUUID(),
-          label: `Approved ${target.capability}`,
+          label: path.basename(normalizedPath) || normalizedPath,
           path: normalizedPath,
           kind: "manual",
           enabled: true,
           capabilities: {
-            read: target.capability === "read",
-            write: target.capability === "write",
-            search: target.capability === "search",
-            list: target.capability === "list",
-            "execute-tasks": target.capability === "execute-tasks",
-            "run-command": target.capability === "run-command",
+            read: false,
+            write: false,
+            search: false,
+            list: false,
+            "execute-tasks": false,
+            "run-command": false,
           },
         });
         return current;
@@ -318,6 +319,7 @@ export class RunnerState {
             id: randomUUID(),
             label: `Approved ${target.command.join(" ")}`,
             command: target.command,
+            matchMode: "exact",
             approvalRequired: false,
           });
         }

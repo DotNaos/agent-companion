@@ -1,5 +1,5 @@
-import { EventEmitter } from "node:events";
 import { screen, type Rectangle } from "electron";
+import { EventEmitter } from "node:events";
 
 export interface CursorSnapshot {
   x: number;
@@ -26,7 +26,7 @@ export class CursorTracker extends EventEmitter {
       return;
     }
     this.tick();
-    this.timer = setInterval(() => this.tick(), 160);
+    this.timer = setInterval(() => this.tick(), 16);
   }
 
   stop() {
@@ -48,8 +48,11 @@ export class CursorTracker extends EventEmitter {
     }
 
     const point = screen.getCursorScreenPoint();
-    const centerX = bounds.x + bounds.width / 2;
-    const centerY = bounds.y + bounds.height / 2 + 40;
+    // Die berechneten Zentrums-Koordinaten (wo sich Pluto befindet) in der Overlay-Shell.
+    // Overlay Fenster ist 432x480. Pluto ist rechts unten: padding-right: 12px, padding-bottom: 8px.
+    // Seine Breite/Höhe ist jeweils 220px.
+    const centerX = bounds.x + bounds.width - 12 - (220 / 2);
+    const centerY = bounds.y + bounds.height - 8 - (220 / 2);
     const dx = point.x - centerX;
     const dy = point.y - centerY;
     const distance = Math.hypot(dx, dy);
@@ -64,8 +67,8 @@ export class CursorTracker extends EventEmitter {
     };
 
     if (
-      Math.abs(next.x - this.snapshot.x) > 0.02 ||
-      Math.abs(next.y - this.snapshot.y) > 0.02 ||
+      Math.abs(next.x - this.snapshot.x) > 0.005 ||
+      Math.abs(next.y - this.snapshot.y) > 0.005 ||
       next.near !== this.snapshot.near
     ) {
       this.snapshot = next;
