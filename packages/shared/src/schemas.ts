@@ -152,6 +152,74 @@ export const plutoVoiceSessionCloseOutputSchema = z.object({
   closedSessionId: z.string().min(1),
 });
 
+export const plutoVoiceSessionAudioChunkSchema = z.object({
+  clientId: z.string().min(1),
+  audioBase64: z.string().min(1),
+  mimeType: z.string().min(1).default("audio/pcm;rate=16000"),
+});
+
+export const plutoVoiceSessionAudioStreamEndInputSchema = z.object({
+  clientId: z.string().min(1),
+});
+
+export const plutoVoiceSessionStreamClientMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("audio_chunk"),
+    chunk: plutoVoiceSessionAudioChunkSchema,
+  }),
+  z.object({
+    type: z.literal("audio_stream_end"),
+    clientId: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("ping"),
+  }),
+]);
+
+export const plutoVoiceSessionStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("session_snapshot"),
+    session: plutoVoiceSessionSchema,
+  }),
+  z.object({
+    type: z.literal("session_updated"),
+    session: plutoVoiceSessionSchema,
+  }),
+  z.object({
+    type: z.literal("input_transcription"),
+    text: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("output_transcription"),
+    text: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("audio_chunk"),
+    audioBase64: z.string().min(1),
+    mimeType: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("status"),
+    status: plutoVoiceSessionStatusSchema,
+    waitingForInput: z.boolean().optional(),
+    interrupted: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("error"),
+    code: z.string().min(1),
+    message: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("closed"),
+    reason: z.string().nullable().default(null),
+  }),
+]);
+
+export const plutoVoiceSessionEventEnvelopeSchema = z.object({
+  sessionId: z.string().min(1),
+  event: plutoVoiceSessionStreamEventSchema,
+});
+
 export const allowedPathSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -583,3 +651,8 @@ export type PlutoVoiceSessionAttachOutput = z.infer<typeof plutoVoiceSessionAtta
 export type PlutoVoiceSessionDetachInput = z.infer<typeof plutoVoiceSessionDetachInputSchema>;
 export type PlutoVoiceSessionDetachOutput = z.infer<typeof plutoVoiceSessionDetachOutputSchema>;
 export type PlutoVoiceSessionCloseOutput = z.infer<typeof plutoVoiceSessionCloseOutputSchema>;
+export type PlutoVoiceSessionAudioChunk = z.infer<typeof plutoVoiceSessionAudioChunkSchema>;
+export type PlutoVoiceSessionAudioStreamEndInput = z.infer<typeof plutoVoiceSessionAudioStreamEndInputSchema>;
+export type PlutoVoiceSessionStreamClientMessage = z.infer<typeof plutoVoiceSessionStreamClientMessageSchema>;
+export type PlutoVoiceSessionStreamEvent = z.infer<typeof plutoVoiceSessionStreamEventSchema>;
+export type PlutoVoiceSessionEventEnvelope = z.infer<typeof plutoVoiceSessionEventEnvelopeSchema>;

@@ -2,6 +2,8 @@ import {
     DEFAULT_ACTIVITY_LIMIT,
     agentCompanionConfigSchema,
     approvalDecisionSchema,
+  plutoVoiceSessionEventEnvelopeSchema,
+  plutoVoiceSessionStreamClientMessageSchema,
     plutoVoiceSessionAttachInputSchema,
     plutoVoiceSessionCreateInputSchema,
     plutoVoiceSessionDetachInputSchema,
@@ -9,7 +11,24 @@ import {
 import express from "express";
 import http from "node:http";
 import { WebSocketServer } from "ws";
+import type { RawData } from "ws";
 import type { RunnerState } from "./state.js";
+
+function decodeWebSocketMessage(rawData: RawData) {
+  if (typeof rawData === "string") {
+    return rawData;
+  }
+
+  if (rawData instanceof Buffer) {
+    return rawData.toString("utf8");
+  }
+
+  if (Array.isArray(rawData)) {
+    return Buffer.concat(rawData).toString("utf8");
+  }
+
+  return Buffer.from(new Uint8Array(rawData)).toString("utf8");
+}
 
 export async function startControlServer(state: RunnerState, port: number) {
   const app = express();
@@ -89,15 +108,27 @@ export async function startControlServer(state: RunnerState, port: number) {
 
   const server = http.createServer(app);
   const wsServer = new WebSocketServer({ noServer: true });
+  const plutoSessionStreamServer = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (req, socket, head) => {
-    if (req.url !== "/internal/stream") {
-      socket.destroy();
+    const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
+    const sessionStreamMatch = /^\/internal\/pluto\/sessions\/([^/]+)\/stream$/.exec(requestUrl.pathname);
+
+    if (requestUrl.pathname === "/internal/stream") {
+      wsServer.handleUpgrade(req, socket, head, (ws) => {
+        wsServer.emit("connection", ws);
+      });
       return;
     }
-    wsServer.handleUpgrade(req, socket, head, (ws) => {
-      wsServer.emit("connection", ws);
-    });
+
+    if (sessionStreamMatch) {
+      plutoSessionStreamServer.handleUpgrade(req, socket, head, (ws) => {
+        plutoSessionStreamServer.emit("connection", ws, decodeURIComponent(sessionStreamMatch[1] ?? ""));
+      });
+      return;
+    }
+
+    socket.destroy();
   });
 
   wsServer.on("connection", (ws) => {
@@ -131,6 +162,90 @@ export async function startControlServer(state: RunnerState, port: number) {
     });
   });
 
+  plutoSessionStreamServer.on("connection", (ws, sessionId: string) => {
+    try {
+      ws.send(
+        JSON.stringify({
+          type: "session_snapshot",
+          session: state.getPlutoVoiceSession(sessionId),
+        }),
+      );
+    } catch (error) {
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          code: "PLUTO_SESSION_NOT_FOUND",
+          message: error instanceof Error ? error.message : "Pluto voice session not found",
+        }),
+      );
+      ws.close();
+      return;
+    }
+
+    const onVoiceEvent = (payload: unknown) => {
+      const parsed = plutoVoiceSessionEventEnvelopeSchema.safeParse(payload);
+      if (!parsed.success || parsed.data.sessionId !== sessionId) {
+        return;
+      }
+      ws.send(JSON.stringify(parsed.data.event));
+    };
+
+    const onVoiceSessions = () => {
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "session_updated",
+            session: state.getPlutoVoiceSession(sessionId),
+          }),
+        );
+      } catch {
+        ws.send(
+          JSON.stringify({
+            type: "closed",
+            reason: "session_closed",
+          }),
+        );
+        ws.close();
+      }
+    };
+
+    state.events.on("pluto_voice_event", onVoiceEvent);
+    state.events.on("pluto_voice_sessions", onVoiceSessions);
+
+    ws.on("message", async (rawData) => {
+      try {
+        const message = JSON.parse(decodeWebSocketMessage(rawData));
+        const parsed = plutoVoiceSessionStreamClientMessageSchema.parse(message);
+        switch (parsed.type) {
+          case "audio_chunk":
+            await state.sendPlutoVoiceSessionAudio(sessionId, parsed.chunk);
+            break;
+          case "audio_stream_end":
+            await state.endPlutoVoiceSessionAudio(sessionId, {
+              clientId: parsed.clientId,
+            });
+            break;
+          case "ping":
+            ws.send(JSON.stringify({ type: "status", status: "idle" }));
+            break;
+        }
+      } catch (error) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            code: "PLUTO_SESSION_STREAM_ERROR",
+            message: error instanceof Error ? error.message : "Pluto voice session stream error",
+          }),
+        );
+      }
+    });
+
+    ws.on("close", () => {
+      state.events.off("pluto_voice_event", onVoiceEvent);
+      state.events.off("pluto_voice_sessions", onVoiceSessions);
+    });
+  });
+
   await new Promise<void>((resolve) => {
     server.listen(port, "127.0.0.1", () => resolve());
   });
@@ -144,6 +259,7 @@ export async function startControlServer(state: RunnerState, port: number) {
     server,
     close: async () => {
       wsServer.close();
+      plutoSessionStreamServer.close();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });

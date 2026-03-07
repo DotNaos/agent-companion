@@ -531,6 +531,52 @@ describe("RunnerState", () => {
     expect(closed).toEqual({ closedSessionId: created.session.id });
     expect(ctx.state.listPlutoVoiceSessions()).toHaveLength(0);
   });
+
+  it("rejects audio chunks from observer clients", async () => {
+    const ctx = createContext();
+    const created = ctx.state.createPlutoVoiceSession({
+      title: "Observer cannot speak",
+      client: {
+        label: "Desktop",
+        requestedRole: "speaker",
+      },
+    });
+    const observer = ctx.state.attachPlutoVoiceSession(created.session.id, {
+      label: "iPhone",
+      requestedRole: "observer",
+    });
+
+    await expect(
+      ctx.state.sendPlutoVoiceSessionAudio(created.session.id, {
+        clientId: observer.client.id,
+        audioBase64: "ZmFrZQ==",
+        mimeType: "audio/pcm;rate=16000",
+      }),
+    ).rejects.toMatchObject({ code: "PLUTO_SESSION_SPEAKER_REQUIRED" });
+  });
+
+  it("fails voice audio send when Gemini is unavailable", async () => {
+    const ctx = createContext();
+    const created = ctx.state.createPlutoVoiceSession({
+      title: "Unavailable voice",
+      client: {
+        label: "Desktop",
+        requestedRole: "speaker",
+      },
+    });
+
+    await expect(
+      ctx.state.sendPlutoVoiceSessionAudio(created.session.id, {
+        clientId: created.client!.id,
+        audioBase64: "ZmFrZQ==",
+        mimeType: "audio/pcm;rate=16000",
+      }),
+    ).rejects.toMatchObject({ code: "PLUTO_VOICE_SEND_FAILED" });
+
+    expect(ctx.state.getPlutoVoiceSession(created.session.id)).toMatchObject({
+      status: "error",
+    });
+  });
 });
 
 function createContext() {

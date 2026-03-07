@@ -17,10 +17,13 @@ import {
     normalizeAbsolutePath,
     notifyPlutoInputSchema,
     plutoCommentaryInputSchema,
+    plutoVoiceSessionAudioChunkSchema,
+    plutoVoiceSessionAudioStreamEndInputSchema,
     plutoStateSchema,
     plutoVoiceSessionAttachInputSchema,
     plutoVoiceSessionClientSchema,
     plutoVoiceSessionCreateInputSchema,
+    plutoVoiceSessionEventEnvelopeSchema,
     plutoVoiceSessionSchema,
     plutoVoiceSessionSummarySchema,
     readFileInputSchema,
@@ -45,6 +48,8 @@ import {
     type PlutoMessage,
     type PlutoVoiceSession,
     type PlutoVoiceSessionClient,
+    type PlutoVoiceSessionEventEnvelope,
+    type PlutoVoiceSessionStreamEvent,
     type RelayRequest,
     type ToolName,
 } from "@agent-companion/shared";
@@ -246,6 +251,9 @@ export class RunnerState {
     }
 
     this.plutoVoiceSessions.set(session.id, session);
+    this.plutoService.registerVoiceSession(session.id, {
+      emit: (event) => this.handlePlutoVoiceSessionEvent(session.id, event),
+    });
     this.logActivity("pluto", `Pluto voice session created`, {
       sessionId: session.id,
       title: session.title,
@@ -294,6 +302,7 @@ export class RunnerState {
   closePlutoVoiceSession(sessionId: string) {
     const session = this.requirePlutoVoiceSessionRecord(sessionId);
     this.plutoVoiceSessions.delete(sessionId);
+    this.plutoService.unregisterVoiceSession(sessionId);
     this.logActivity("pluto", `Pluto voice session closed`, {
       sessionId,
       title: session.title,
@@ -341,6 +350,39 @@ export class RunnerState {
 
   recordAuth(message: string, success: boolean, data?: Record<string, unknown>) {
     this.logActivity("auth", message, { success, ...data }, success ? "info" : "warn");
+  }
+
+  async sendPlutoVoiceSessionAudio(sessionId: string, input: unknown) {
+    const session = this.requirePlutoVoiceSessionRecord(sessionId);
+    const parsed = plutoVoiceSessionAudioChunkSchema.parse(input);
+    this.requireSpeakerClient(session, parsed.clientId);
+    this.touchPlutoVoiceSessionClient(session, parsed.clientId);
+    session.status = "listening";
+    this.touchPlutoVoiceSession(session);
+    this.emitPlutoVoiceSessions();
+    try {
+      await this.plutoService.sendVoiceSessionAudioChunk(sessionId, parsed);
+    } catch (error) {
+      session.status = "error";
+      this.touchPlutoVoiceSession(session);
+      this.emitPlutoVoiceSessions();
+      const message = error instanceof Error ? error.message : "Pluto voice session audio send failed";
+      this.handlePlutoVoiceSessionEvent(sessionId, {
+        type: "error",
+        code: "PLUTO_VOICE_SEND_FAILED",
+        message,
+      });
+      throw new AppError("PLUTO_VOICE_SEND_FAILED", message, 503);
+    }
+  }
+
+  async endPlutoVoiceSessionAudio(sessionId: string, input: unknown) {
+    const session = this.requirePlutoVoiceSessionRecord(sessionId);
+    const parsed = plutoVoiceSessionAudioStreamEndInputSchema.parse(input);
+    this.requireSpeakerClient(session, parsed.clientId);
+    this.touchPlutoVoiceSessionClient(session, parsed.clientId);
+    this.touchPlutoVoiceSession(session);
+    await this.plutoService.endVoiceSessionAudio(sessionId);
   }
 
   async handleRelayRequest(request: RelayRequest) {
@@ -452,6 +494,10 @@ export class RunnerState {
     this.events.emit("pluto_voice_sessions", this.listPlutoVoiceSessions());
   }
 
+	private emitPlutoVoiceEvent(payload: PlutoVoiceSessionEventEnvelope) {
+		this.events.emit("pluto_voice_event", plutoVoiceSessionEventEnvelopeSchema.parse(payload));
+	}
+
   private setPlutoPending(next: boolean) {
     this.plutoPending = next;
     this.emitPluto();
@@ -472,6 +518,53 @@ export class RunnerState {
 
   private touchPlutoVoiceSession(session: PlutoVoiceSessionRecord) {
     session.lastActivityAt = new Date().toISOString();
+  }
+
+  private touchPlutoVoiceSessionClient(session: PlutoVoiceSessionRecord, clientId: string) {
+    const client = session.clients.find((entry) => entry.id === clientId);
+    if (!client) {
+      throw new AppError("PLUTO_SESSION_CLIENT_NOT_FOUND", "Pluto voice session client not found", 404);
+    }
+    client.lastSeenAt = new Date().toISOString();
+  }
+
+  private requireSpeakerClient(session: PlutoVoiceSessionRecord, clientId: string) {
+    const client = session.clients.find((entry) => entry.id === clientId);
+    if (!client) {
+      throw new AppError("PLUTO_SESSION_CLIENT_NOT_FOUND", "Pluto voice session client not found", 404);
+    }
+    if (session.speakerClientId !== clientId || !client.canSendAudio) {
+      throw new AppError("PLUTO_SESSION_SPEAKER_REQUIRED", "Only the active speaker can send Pluto voice audio", 403);
+    }
+  }
+
+  private handlePlutoVoiceSessionEvent(sessionId: string, event: PlutoVoiceSessionStreamEvent) {
+    const session = this.plutoVoiceSessions.get(sessionId);
+    if (session) {
+      switch (event.type) {
+        case "status":
+          session.status = event.status;
+          break;
+        case "error":
+          session.status = "error";
+          break;
+        case "closed":
+          session.status = "idle";
+          break;
+        case "audio_chunk":
+          if (session.status !== "responding") {
+            session.status = "responding";
+          }
+          break;
+      }
+      this.touchPlutoVoiceSession(session);
+      this.emitPlutoVoiceSessions();
+    }
+
+    this.emitPlutoVoiceEvent({
+      sessionId,
+      event,
+    });
   }
 
   private attachClientToVoiceSessionRecord(

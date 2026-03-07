@@ -1,12 +1,16 @@
 import {
     notifyPlutoInputSchema,
     plutoCommentaryInputSchema,
+	plutoVoiceSessionAudioChunkSchema,
+	plutoVoiceSessionStreamEventSchema,
     plutoMessageSchema,
     type NotifyPlutoInput,
     type PlutoCommentaryInput,
     type PlutoDelivery,
     type PlutoMessage,
     type PlutoTone,
+	type PlutoVoiceSessionAudioChunk,
+	type PlutoVoiceSessionStreamEvent,
 } from "@agent-companion/shared";
 import {
     GoogleGenAI,
@@ -43,9 +47,188 @@ interface GeneratedPayload {
 	usedFallback: boolean;
 }
 
+type LiveSessionConnection = Awaited<ReturnType<GoogleGenAI["live"]["connect"]>>;
+
+interface PlutoVoiceSessionRegistration {
+	emit: (event: PlutoVoiceSessionStreamEvent) => void;
+}
+
+class PlutoVoiceSessionRuntime {
+	private session: LiveSessionConnection | null = null;
+	private connecting: Promise<LiveSessionConnection> | null = null;
+	private closing = false;
+
+	constructor(
+		private readonly ai: GoogleGenAI,
+		private readonly env: RunnerEnv,
+		private readonly sessionId: string,
+		private readonly emit: (event: PlutoVoiceSessionStreamEvent) => void,
+	) {}
+
+	async sendAudioChunk(chunk: PlutoVoiceSessionAudioChunk) {
+		const parsed = plutoVoiceSessionAudioChunkSchema.parse(chunk);
+		const session = await this.ensureSession();
+		this.emitEvent({
+			type: "status",
+			status: "listening",
+		});
+		session.sendRealtimeInput({
+			audio: {
+				data: parsed.audioBase64,
+				mimeType: parsed.mimeType,
+			},
+		});
+	}
+
+	async endAudioStream() {
+		const session = await this.ensureSession();
+		session.sendRealtimeInput({
+			audioStreamEnd: true,
+		});
+	}
+
+	close(reason: string | null = "session_closed") {
+		this.closing = true;
+		this.session?.close();
+		this.session = null;
+		this.connecting = null;
+		this.emitEvent({
+			type: "closed",
+			reason,
+		});
+	}
+
+	private async ensureSession() {
+		if (this.session) {
+			return this.session;
+		}
+		if (this.connecting) {
+			return this.connecting;
+		}
+
+		this.connecting = this.ai.live.connect({
+			model: this.env.PLUTO_MODEL,
+			callbacks: {
+				onmessage: (message: LiveServerMessage) => {
+					this.handleMessage(message);
+				},
+				onerror: (event: ErrorEvent) => {
+					this.session = null;
+					this.connecting = null;
+					this.emitEvent({
+						type: "error",
+						code: "PLUTO_LIVE_ERROR",
+						message: event.message,
+					});
+				},
+				onclose: (event: CloseEvent) => {
+					this.session = null;
+					this.connecting = null;
+					if (!this.closing) {
+						this.emitEvent({
+							type: "closed",
+							reason: event.reason || null,
+						});
+					}
+					this.closing = false;
+				},
+			},
+			config: {
+				responseModalities: [Modality.AUDIO],
+				inputAudioTranscription: {},
+				outputAudioTranscription: {},
+				speechConfig: {
+					voiceConfig: {
+						prebuiltVoiceConfig: {
+							voiceName: this.env.PLUTO_VOICE_NAME || "Achird",
+						},
+					},
+				},
+			},
+		})
+			.then((session) => {
+				this.session = session;
+				this.connecting = null;
+				this.closing = false;
+				return session;
+			})
+			.catch((error) => {
+				this.connecting = null;
+				throw error;
+			});
+
+		return this.connecting;
+	}
+
+	private handleMessage(message: LiveServerMessage) {
+		const content = message.serverContent;
+		const inputTranscription = content?.inputTranscription?.text?.trim();
+		if (inputTranscription) {
+			this.emitEvent({
+				type: "input_transcription",
+				text: inputTranscription,
+			});
+		}
+
+		const outputTranscription = content?.outputTranscription?.text?.trim();
+		if (outputTranscription) {
+			this.emitEvent({
+				type: "output_transcription",
+				text: outputTranscription,
+			});
+		}
+
+		for (const part of content?.modelTurn?.parts ?? []) {
+			if (part.inlineData?.data) {
+				this.emitEvent({
+					type: "audio_chunk",
+					audioBase64: part.inlineData.data,
+					mimeType: part.inlineData.mimeType ?? "audio/pcm;rate=24000",
+				});
+			}
+		}
+
+		if (content?.interrupted) {
+			this.emitEvent({
+				type: "status",
+				status: "idle",
+				interrupted: true,
+			});
+		}
+
+		if (content?.waitingForInput) {
+			this.emitEvent({
+				type: "status",
+				status: "idle",
+				waitingForInput: true,
+			});
+		}
+
+		if (content?.generationComplete) {
+			this.emitEvent({
+				type: "status",
+				status: "responding",
+			});
+		}
+
+		if (content?.turnComplete) {
+			this.emitEvent({
+				type: "status",
+				status: "idle",
+			});
+		}
+	}
+
+	private emitEvent(event: PlutoVoiceSessionStreamEvent) {
+		this.emit(plutoVoiceSessionStreamEventSchema.parse(event));
+	}
+}
+
 export class PlutoService {
 	private readonly ai: GoogleGenAI | null;
 	private readonly recentMessages: string[] = [];
+	private readonly voiceSessionRegistrations = new Map<string, PlutoVoiceSessionRegistration>();
+	private readonly voiceSessionRuntimes = new Map<string, PlutoVoiceSessionRuntime>();
 
 	constructor(private readonly env: RunnerEnv) {
 		this.ai = env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: env.GEMINI_API_KEY }) : null;
@@ -58,6 +241,35 @@ export class PlutoService {
 
 	getModel() {
 		return this.env.PLUTO_MODEL;
+	}
+
+	registerVoiceSession(sessionId: string, registration: PlutoVoiceSessionRegistration) {
+		this.voiceSessionRegistrations.set(sessionId, registration);
+	}
+
+	unregisterVoiceSession(sessionId: string) {
+		this.voiceSessionRegistrations.delete(sessionId);
+		const runtime = this.voiceSessionRuntimes.get(sessionId);
+		if (runtime) {
+			runtime.close();
+			this.voiceSessionRuntimes.delete(sessionId);
+		}
+	}
+
+	async sendVoiceSessionAudioChunk(sessionId: string, chunk: PlutoVoiceSessionAudioChunk) {
+		if (!this.ai) {
+			throw new Error("Gemini is not configured for Pluto live voice sessions");
+		}
+		const runtime = this.getOrCreateVoiceSessionRuntime(sessionId);
+		await runtime.sendAudioChunk(chunk);
+	}
+
+	async endVoiceSessionAudio(sessionId: string) {
+		if (!this.ai) {
+			throw new Error("Gemini is not configured for Pluto live voice sessions");
+		}
+		const runtime = this.getOrCreateVoiceSessionRuntime(sessionId);
+		await runtime.endAudioStream();
 	}
 
 	async notify(input: NotifyPlutoInput, options: { muted: boolean; actorEmail: string }): Promise<GeneratedPayload> {
@@ -442,6 +654,26 @@ Do not repeat these phrases or sentiments. Keep your commentary fresh and divers
 			audioParts,
 			audioMimeType,
 		};
+	}
+
+	private getOrCreateVoiceSessionRuntime(sessionId: string) {
+		const existing = this.voiceSessionRuntimes.get(sessionId);
+		if (existing) {
+			return existing;
+		}
+
+		if (!this.ai) {
+			throw new Error("Gemini is not configured for Pluto live voice sessions");
+		}
+
+		const registration = this.voiceSessionRegistrations.get(sessionId);
+		if (!registration) {
+			throw new Error(`Pluto voice session ${sessionId} is not registered`);
+		}
+
+		const runtime = new PlutoVoiceSessionRuntime(this.ai, this.env, sessionId, registration.emit);
+		this.voiceSessionRuntimes.set(sessionId, runtime);
+		return runtime;
 	}
 }
 

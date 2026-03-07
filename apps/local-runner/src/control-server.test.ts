@@ -1,10 +1,27 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { WebSocket, type RawData } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 import { startControlServer } from "./control-server.js";
 import type { RunnerEnv } from "./env.js";
 import { RunnerState } from "./state.js";
+
+function decodeWebSocketMessage(data: RawData) {
+  if (typeof data === "string") {
+    return data;
+  }
+
+  if (data instanceof Buffer) {
+    return data.toString("utf8");
+  }
+
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString("utf8");
+  }
+
+  return Buffer.from(new Uint8Array(data)).toString("utf8");
+}
 
 const tempDirs: string[] = [];
 
@@ -82,6 +99,59 @@ describe("control server Pluto voice sessions", () => {
       const emptyListResponse = await fetch(`http://127.0.0.1:${server.port}/internal/pluto/sessions`);
       const emptyList = await emptyListResponse.json();
       expect(emptyList.sessions).toHaveLength(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("streams a session snapshot and returns a voice-stream error when Gemini is unavailable", async () => {
+    const ctx = createContext();
+    const server = await startControlServer(ctx.state, 0);
+
+    try {
+      const created = ctx.state.createPlutoVoiceSession({
+        title: "WS Pluto",
+        client: {
+          label: "Desktop",
+          requestedRole: "speaker",
+        },
+      });
+
+      const received: Array<Record<string, unknown>> = [];
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(
+          `ws://127.0.0.1:${server.port}/internal/pluto/sessions/${created.session.id}/stream`,
+        );
+
+        ws.on("message", (data) => {
+          received.push(JSON.parse(decodeWebSocketMessage(data)) as Record<string, unknown>);
+          if (received.length === 1) {
+            ws.send(
+              JSON.stringify({
+                type: "audio_chunk",
+                chunk: {
+                  clientId: created.client!.id,
+                  audioBase64: "ZmFrZQ==",
+                  mimeType: "audio/pcm;rate=16000",
+                },
+              }),
+            );
+            return;
+          }
+
+          if (received.some((entry) => entry.type === "error")) {
+            ws.close();
+            resolve();
+          }
+        });
+
+        ws.on("error", reject);
+      });
+
+      expect(received[0]).toMatchObject({
+        type: "session_snapshot",
+      });
+      expect(received.some((entry) => entry.type === "error")).toBe(true);
     } finally {
       await server.close();
     }
