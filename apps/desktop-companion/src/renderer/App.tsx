@@ -133,8 +133,6 @@ export function App() {
                 : "Starting"
               : "Offline"
           }
-          actionLabel={bootstrap?.desktop.runnerRunning ? "Stop Runner" : "Start Runner"}
-          onAction={toggleRunner}
         />
         <MetricCard
           title="Tunnel"
@@ -396,19 +394,6 @@ export function App() {
       setTimeout(() => setStatusMessage(null), 2000);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Tunnel update failed");
-    }
-  }
-
-  async function toggleRunner() {
-    try {
-      const pathname = bootstrap?.desktop.runnerRunning ? "/runner/stop" : "/runner/start";
-      const result = await apiRequest<Bootstrap>(pathname, "POST");
-      setBootstrap(result);
-      setDraftConfig(result.runner.config);
-      setStatusMessage(result.desktop.runnerRunning ? "Runner started." : "Runner stopped.");
-      setTimeout(() => setStatusMessage(null), 2000);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Runner update failed");
     }
   }
 
