@@ -72,25 +72,7 @@ describe("desktop admin server", () => {
     expect(tunnelManager.isRunning()).toBe(false);
   });
 
-  it("starts and stops the runner from the desktop API", async () => {
-    const { app, runnerManager } = createTestServer({
-      allowedOrigins: ["https://admin.example.com"],
-    });
 
-    const started = await request(app)
-      .post("/api/desktop/runner/start")
-      .set("x-desktop-token", "desktop-token");
-
-    expect(started.status).toBe(200);
-    expect(runnerManager.isRunning()).toBe(true);
-
-    const stopped = await request(app)
-      .post("/api/desktop/runner/stop")
-      .set("x-desktop-token", "desktop-token");
-
-    expect(stopped.status).toBe(200);
-    expect(runnerManager.isRunning()).toBe(false);
-  });
 });
 
 function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
@@ -169,29 +151,6 @@ function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
     }
   }
 
-  class FakeRunnerManager extends EventEmitter {
-    private running = false;
-    private lastError: string | null = null;
-
-    isRunning() {
-      return this.running;
-    }
-
-    getLastError() {
-      return this.lastError;
-    }
-
-    start() {
-      this.running = true;
-      this.emit("status", true);
-    }
-
-    stop() {
-      this.running = false;
-      this.emit("status", false);
-    }
-  }
-
   class FakeCursorTracker extends EventEmitter {
     getSnapshot() {
       return {
@@ -204,18 +163,17 @@ function createTestServer({ allowedOrigins }: { allowedOrigins: string[] }) {
   }
 
   const tunnelManager = new FakeTunnelManager();
-  const runnerManager = new FakeRunnerManager();
   const cursorTracker = new FakeCursorTracker();
 
   const server = createDesktopServer({
     env,
     cursorTracker: cursorTracker as never,
     runnerBridge: new FakeRunnerBridge() as never,
-    runnerManager: runnerManager as never,
+
     tunnelManager: tunnelManager as never,
     userStore: new UserStore(env.USER_STORE_PATH),
     desktopToken: "desktop-token",
   });
 
-  return { app: server.app, env, tunnelManager, runnerManager };
+  return { app: server.app, env, tunnelManager };
 }

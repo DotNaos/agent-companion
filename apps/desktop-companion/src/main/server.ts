@@ -20,7 +20,7 @@ import {
 import type { DesktopEnv } from "./env.js";
 import type { CursorTracker } from "./cursor-tracker.js";
 import type { RunnerBridge } from "./runner-bridge.js";
-import type { RunnerManager } from "./runner-manager.js";
+
 import type { TunnelManager } from "./tunnel-manager.js";
 import type { UserStore } from "./user-store.js";
 
@@ -28,14 +28,13 @@ interface CreateDesktopServerOptions {
   env: DesktopEnv;
   cursorTracker: CursorTracker;
   runnerBridge: RunnerBridge;
-  runnerManager: RunnerManager;
   tunnelManager: TunnelManager;
   userStore: UserStore;
   desktopToken: string;
 }
 
 export function createDesktopServer(options: CreateDesktopServerOptions) {
-  const { env, cursorTracker, runnerBridge, runnerManager, tunnelManager, userStore, desktopToken } = options;
+  const { env, cursorTracker, runnerBridge, tunnelManager, userStore, desktopToken } = options;
   const app = express();
   app.use(cookieParser());
   app.use(express.json({ limit: "1mb" }));
@@ -97,7 +96,7 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
   app.get("/login", renderAppShell(env, "login"));
 
   app.get("/api/desktop/bootstrap", requireDesktopToken(desktopToken), (_req, res) => {
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker));
   });
   app.get("/api/desktop/activity", requireDesktopToken(desktopToken), (_req, res) => {
     res.json({ entries: runnerBridge.getSnapshot().activity });
@@ -106,7 +105,7 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
     res.json({ approvals: runnerBridge.getSnapshot().approvals });
   });
   app.get("/api/desktop/status", requireDesktopToken(desktopToken), (_req, res) => {
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker));
   });
   app.put("/api/desktop/config", requireDesktopToken(desktopToken), async (req, res, next) => {
     try {
@@ -127,28 +126,26 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
   });
   app.post("/api/desktop/tunnel/start", requireDesktopToken(desktopToken), (_req, res) => {
     tunnelManager.start();
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker));
   });
   app.post("/api/desktop/tunnel/stop", requireDesktopToken(desktopToken), (_req, res) => {
     tunnelManager.stop();
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker));
   });
   app.post("/api/desktop/runner/start", requireDesktopToken(desktopToken), (_req, res) => {
-    runnerManager.start();
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.status(501).json({ error: "Runner lifecycle is managed externally in this setup." });
   });
   app.post("/api/desktop/runner/stop", requireDesktopToken(desktopToken), (_req, res) => {
-    runnerManager.stop();
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.status(501).json({ error: "Runner lifecycle is managed externally in this setup." });
   });
 
   app.use("/api/admin", requireAdminSession(env.SESSION_SECRET));
   app.use("/api/admin", requireAllowedOrigin(runnerBridge));
   app.get("/api/admin/bootstrap", (_req, res) => {
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker));
   });
   app.get("/api/admin/status", (_req, res) => {
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker));
   });
   app.get("/api/admin/activity", (_req, res) => {
     res.json({ entries: runnerBridge.getSnapshot().activity });
@@ -175,19 +172,17 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
   });
   app.post("/api/admin/tunnel/start", (_req, res) => {
     tunnelManager.start();
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker));
   });
   app.post("/api/admin/tunnel/stop", (_req, res) => {
     tunnelManager.stop();
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker));
   });
   app.post("/api/admin/runner/start", (_req, res) => {
-    runnerManager.start();
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.status(501).json({ error: "Runner lifecycle is managed externally in this setup." });
   });
   app.post("/api/admin/runner/stop", (_req, res) => {
-    runnerManager.stop();
-    res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager));
+    res.status(501).json({ error: "Runner lifecycle is managed externally in this setup." });
   });
 
   app.use((error: unknown, _req: Request, res: Response, _next: express.NextFunction) => {
@@ -232,21 +227,19 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
 
   wsServer.on("connection", (ws) => {
     ws.send(
-      JSON.stringify({ type: "bootstrap", data: buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager) }),
+      JSON.stringify({ type: "bootstrap", data: buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker) }),
     );
     const sendSnapshot = () => {
       ws.send(
-        JSON.stringify({ type: "bootstrap", data: buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker, runnerManager) }),
+        JSON.stringify({ type: "bootstrap", data: buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker) }),
       );
     };
     runnerBridge.on("snapshot", sendSnapshot);
     cursorTracker.on("status", sendSnapshot);
-    runnerManager.on("status", sendSnapshot);
     tunnelManager.on("status", sendSnapshot);
     ws.on("close", () => {
       runnerBridge.off("snapshot", sendSnapshot);
       cursorTracker.off("status", sendSnapshot);
-      runnerManager.off("status", sendSnapshot);
       tunnelManager.off("status", sendSnapshot);
     });
   });
@@ -273,15 +266,14 @@ function buildBootstrap(
   runnerBridge: RunnerBridge,
   tunnelManager: TunnelManager,
   cursorTracker: CursorTracker,
-  runnerManager?: RunnerManager,
 ) {
   const snapshot = runnerBridge.getSnapshot();
   const publicUrls = getPublicUrls(env);
   return {
     runner: snapshot,
     desktop: {
-      runnerRunning: runnerManager?.isRunning() ?? false,
-      runnerLastError: runnerManager?.getLastError() ?? null,
+      runnerRunning: snapshot.status.connectedToRemote,
+      runnerLastError: null,
       tunnelRunning: tunnelManager.isRunning(),
       publicAdminUrl: publicUrls.adminUrl,
       publicMcpUrl: publicUrls.mcpUrl,

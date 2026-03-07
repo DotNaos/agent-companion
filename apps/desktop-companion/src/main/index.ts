@@ -5,7 +5,7 @@ import path from "node:path";
 import { loadDesktopEnv } from "./env.js";
 import { CursorTracker } from "./cursor-tracker.js";
 import { RunnerBridge } from "./runner-bridge.js";
-import { RunnerManager } from "./runner-manager.js";
+
 import { createDesktopServer } from "./server.js";
 import { TunnelManager } from "./tunnel-manager.js";
 import { UserStore } from "./user-store.js";
@@ -14,7 +14,7 @@ const env = loadDesktopEnv();
 const desktopToken = randomUUID();
 const cursorTracker = new CursorTracker(() => overlayWindow?.getBounds() ?? null);
 const runnerBridge = new RunnerBridge(`http://127.0.0.1:${env.LOCAL_RUNNER_PORT}`);
-const runnerManager = new RunnerManager();
+
 const tunnelManager = new TunnelManager(env.CLOUDFLARED_BIN, env.CLOUDFLARED_CONFIG_PATH);
 const userStore = new UserStore(env.USER_STORE_PATH);
 
@@ -35,7 +35,6 @@ const desktopServer = createDesktopServer({
   env,
   cursorTracker,
   runnerBridge,
-  runnerManager,
   tunnelManager,
   userStore,
   desktopToken,
@@ -55,7 +54,6 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   isQuitting = true;
-  runnerManager.stop();
   cursorTracker.stop();
   tunnelManager.stop();
   debugLog("app:before-quit");
@@ -212,17 +210,7 @@ function updateTrayMenu() {
           updateTrayMenu();
         },
       },
-      {
-        label: runnerManager.isRunning() ? "Stop Runner" : "Start Runner",
-        click: () => {
-          if (runnerManager.isRunning()) {
-            runnerManager.stop();
-          } else {
-            runnerManager.start();
-          }
-          updateTrayMenu();
-        },
-      },
+
       {
         label: tunnelManager.isRunning() ? "Stop Tunnel" : "Start Tunnel",
         click: () => {
@@ -258,7 +246,6 @@ function createTrayIcon() {
 }
 
 function wireApprovals() {
-  runnerManager.on("status", updateTrayMenu);
   runnerBridge.on("snapshot", () => {
     const approvals = runnerBridge.getSnapshot().approvals;
     if (approvals.length > 0) {
