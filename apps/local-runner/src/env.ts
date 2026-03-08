@@ -14,6 +14,7 @@ const envSchema = z.object({
   REMOTE_SERVER_URL: z.string().url().default("http://127.0.0.1:8787"),
   RUNNER_TOKEN: z.string().min(1).default("change-me-runner-token"),
   RUNNER_ID: z.string().min(1).default(os.hostname()),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   GEMINI_API_KEY: z.string().default(""),
   PLUTO_MODEL: z.string().min(1).default("models/gemini-2.5-flash-native-audio-preview-12-2025"),
   PLUTO_VOICE_NAME: z.string().min(1).default("Achird"),

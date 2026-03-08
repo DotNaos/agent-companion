@@ -5,7 +5,14 @@ import type {
 } from '@agent-companion/shared';
 import { plutoVoiceSessionStreamEventSchema } from '@agent-companion/shared';
 import { Mic, MicOff, Radio, Volume2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+    type Dispatch,
+    type SetStateAction,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from 'react';
 import { plutoAudioState } from './PlutoAvatar.js';
 import { Badge } from './ui/badge.js';
 import { Button } from './ui/button.js';
@@ -19,6 +26,8 @@ type VoiceTimelineEntry = {
     createdAt: string;
 };
 
+type StreamState = 'idle' | 'connecting' | 'connected' | 'closed';
+
 type Props = Readonly<{
     apiBase: string;
     desktopToken?: string;
@@ -26,6 +35,7 @@ type Props = Readonly<{
     clientId: string | null;
     sessions: PlutoVoiceSessionSummary[];
     variant?: 'panel' | 'overlay';
+    onRequestSpeaker?: (sessionId: string) => Promise<void> | void;
     onError: (message: string) => void;
     onInfo: (message: string) => void;
 }>;
@@ -40,12 +50,11 @@ export function PlutoVoiceSessionConsole({
     clientId,
     sessions,
     variant = 'panel',
+    onRequestSpeaker,
     onError,
     onInfo,
 }: Props) {
-    const [streamState, setStreamState] = useState<
-        'idle' | 'connecting' | 'connected' | 'closed'
-    >('idle');
+    const [streamState, setStreamState] = useState<StreamState>('idle');
     const [session, setSession] = useState<PlutoVoiceSession | null>(null);
     const [timeline, setTimeline] = useState<VoiceTimelineEntry[]>([]);
     const [isRecording, setIsRecording] = useState(false);
@@ -67,6 +76,7 @@ export function PlutoVoiceSessionConsole({
     const [selectedOutputId, setSelectedOutputId] = useState<string | null>(
         () => readAudioDevicePreference(PLUTO_AUDIO_OUTPUT_STORAGE_KEY),
     );
+    const [isTakingMic, setIsTakingMic] = useState(false);
     const socketRef = useRef<WebSocket | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -77,6 +87,9 @@ export function PlutoVoiceSessionConsole({
     const micMonitorAnimationFrameRef = useRef<number | null>(null);
     const micMonitorContextRef = useRef<AudioContext | null>(null);
     const micMonitorSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const intentionalSocketCloseRef = useRef(false);
+    const transportErrorRef = useRef(false);
+    const streamTerminalEventRef = useRef<'error' | 'closed' | null>(null);
 
     const selectedSummary = useMemo(
         () => sessions.find((entry) => entry.id === sessionId) ?? null,
@@ -86,14 +99,24 @@ export function PlutoVoiceSessionConsole({
     const isSpeaker =
         Boolean(clientId) && activeSession?.speakerClientId === clientId;
     const isOverlay = variant === 'overlay';
+    const currentSpeakerClientId =
+        activeSession?.speakerClientId ??
+        selectedSummary?.speakerClientId ??
+        null;
+    const canRequestSpeaker = Boolean(
+        onRequestSpeaker &&
+        sessionId &&
+        clientId &&
+        !isSpeaker &&
+        !currentSpeakerClientId,
+    );
     const recordingHint = getRecordingHint(
         isSpeaker,
         Boolean(sessionId),
+        canRequestSpeaker,
         isOverlay,
     );
-    const roleLabel = getRoleLabel(isSpeaker, Boolean(clientId));
     const visibleTimeline = isOverlay ? timeline.slice(-4) : timeline;
-    const descriptionText = getDescriptionText(Boolean(sessionId), isOverlay);
     const canEnumerateDevices = Boolean(
         globalThis.navigator?.mediaDevices?.enumerateDevices,
     );
@@ -102,7 +125,8 @@ export function PlutoVoiceSessionConsole({
         isSpeaker,
         hasClient: Boolean(clientId),
         hasSession: Boolean(sessionId),
-        hasSpeaker: Boolean(activeSession?.speakerClientId),
+        hasSpeaker: Boolean(currentSpeakerClientId),
+        canRequestSpeaker,
         isOverlay,
     });
     const inputDeviceHint = getInputDeviceHint({
@@ -111,6 +135,15 @@ export function PlutoVoiceSessionConsole({
         isRecording,
     });
     const liveMicFeedback = getLiveMicFeedback(micLevel);
+    const primaryAction = getVoiceConsolePrimaryAction({
+        canRequestSpeaker,
+        hasClient: Boolean(clientId),
+        hasSession: Boolean(sessionId),
+        isRecording,
+        isSpeaker,
+        isTakingMic,
+        streamState,
+    });
 
     useEffect(() => {
         void refreshAudioDevices();
@@ -176,6 +209,9 @@ export function PlutoVoiceSessionConsole({
     useEffect(() => {
         setSession(null);
         setTimeline([]);
+        intentionalSocketCloseRef.current = false;
+        transportErrorRef.current = false;
+        streamTerminalEventRef.current = null;
 
         if (!sessionId) {
             setStreamState('idle');
@@ -191,6 +227,7 @@ export function PlutoVoiceSessionConsole({
 
         socket.addEventListener('open', () => {
             setStreamState('connected');
+            transportErrorRef.current = false;
         });
 
         socket.addEventListener('message', (event) => {
@@ -203,18 +240,31 @@ export function PlutoVoiceSessionConsole({
             handleStreamEvent(parsed.data);
         });
 
-        socket.addEventListener('close', () => {
+        socket.addEventListener('close', (event) => {
             setStreamState('closed');
             cleanupAudioCapture();
+
+            if (
+                shouldReportUnexpectedDisconnect({
+                    intentionalClose: intentionalSocketCloseRef.current,
+                    sawTerminalEvent: streamTerminalEventRef.current !== null,
+                    sawTransportError: transportErrorRef.current,
+                    wasClean: event.wasClean,
+                })
+            ) {
+                const reason = event.reason.trim();
+                onError(
+                    reason || 'Pluto session stream disconnected unexpectedly.',
+                );
+            }
         });
 
         socket.addEventListener('error', () => {
-            setStreamState('closed');
-            onError('Pluto session stream disconnected unexpectedly.');
-            cleanupAudioCapture();
+            transportErrorRef.current = true;
         });
 
         return () => {
+            intentionalSocketCloseRef.current = true;
             cleanupAudioCapture();
             socketRef.current = null;
             socket.close();
@@ -228,161 +278,45 @@ export function PlutoVoiceSessionConsole({
         setSession((current) => current ?? null);
     }, [selectedSummary, sessionId]);
 
-    async function toggleRecording() {
-        if (isRecording) {
-            stopRecording();
-            return;
-        }
+    const stopRecording = () => {
+        stopPlutoRecording(mediaRecorderRef, appendTimelineEntry);
+    };
 
-        if (!sessionId || !clientId || !isSpeaker) {
-            publishError(
-                'Join the active Pluto session as speaker before talking.',
-            );
-            return;
-        }
-
-        if (!navigator.mediaDevices?.getUserMedia) {
-            publishError(
-                'This browser environment does not expose microphone capture.',
-            );
-            return;
-        }
-
-        if (socketRef.current?.readyState !== WebSocket.OPEN) {
-            publishError('The Pluto session stream is not connected yet.');
-            return;
-        }
-
-        try {
-            const audioConstraints = selectedInputId
-                ? { deviceId: { exact: selectedInputId } }
-                : true;
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: audioConstraints,
-            });
-            mediaStreamRef.current = stream;
-            void refreshAudioDevices();
-            void startMicMonitor(stream);
-            const mimeType = pickRecordingMimeType();
-            const recorder = mimeType
-                ? new MediaRecorder(stream, { mimeType })
-                : new MediaRecorder(stream);
-            mediaRecorderRef.current = recorder;
-
-            recorder.addEventListener('dataavailable', (event) => {
-                if (event.data.size === 0 || !clientId) {
-                    return;
-                }
-                void sendAudioChunk(clientId, event.data, recorder.mimeType);
-            });
-
-            recorder.addEventListener('stop', () => {
-                setIsRecording(false);
-                mediaRecorderRef.current = null;
-                stopMediaStream();
-                if (
-                    clientId &&
-                    socketRef.current?.readyState === WebSocket.OPEN
-                ) {
-                    socketRef.current.send(
-                        JSON.stringify({
-                            type: 'audio_stream_end',
-                            clientId,
-                        }),
-                    );
-                }
-            });
-
-            recorder.start(250);
-            setIsRecording(true);
-            appendTimelineEntry({
-                label: 'Mic',
-                text: 'Recording started.',
-                tone: 'accent',
-            });
-            publishInfo(
-                'Recording started. Speak and tap again when you are done.',
-            );
-        } catch (error) {
-            cleanupAudioCapture();
-            publishError(
-                error instanceof Error
-                    ? error.message
-                    : 'Microphone capture failed',
-            );
-        }
-    }
-
-    function stopRecording() {
-        const recorder = mediaRecorderRef.current;
-        if (!recorder || recorder.state === 'inactive') {
-            return;
-        }
-        recorder.stop();
-        appendTimelineEntry({
-            label: 'Mic',
-            text: 'Recording stopped. Sending to Pluto…',
-            tone: 'neutral',
+    const toggleRecording = async () => {
+        await togglePlutoRecording({
+            appendTimelineEntry,
+            cleanupAudioCapture,
+            clientId,
+            isRecording,
+            isSpeaker,
+            mediaRecorderRef,
+            mediaStreamRef,
+            publishError,
+            publishInfo,
+            refreshAudioDevices,
+            selectedInputId,
+            sendAudioChunk,
+            sessionId,
+            setIsRecording,
+            socketRef,
+            startMicMonitor,
+            stopMediaStream,
+            stopRecording,
         });
-    }
+    };
 
-    function handleStreamEvent(event: PlutoVoiceSessionStreamEvent) {
-        switch (event.type) {
-            case 'session_snapshot':
-            case 'session_updated':
-                setSession(event.session);
-                return;
-            case 'input_transcription':
-                appendTimelineEntry({
-                    label: 'You',
-                    text: event.text,
-                    tone: 'accent',
-                });
-                return;
-            case 'output_transcription':
-                appendTimelineEntry({
-                    label: 'Pluto',
-                    text: event.text,
-                    tone: 'neutral',
-                });
-                return;
-            case 'audio_chunk':
-                void playIncomingAudioChunk(event.audioBase64, event.mimeType);
-                return;
-            case 'status':
-                appendTimelineEntry({
-                    label: 'Status',
-                    text: describeStatusEvent(event),
-                    tone: 'neutral',
-                });
-                setSession((current) =>
-                    current
-                        ? {
-                              ...current,
-                              status: event.status,
-                          }
-                        : current,
-                );
-                return;
-            case 'error':
-                appendTimelineEntry({
-                    label: 'Error',
-                    text: event.message,
-                    tone: 'error',
-                });
-                publishError(event.message);
-                return;
-            case 'closed':
-                appendTimelineEntry({
-                    label: 'Closed',
-                    text: event.reason ?? 'Session closed.',
-                    tone: 'neutral',
-                });
-                setStreamState('closed');
-                cleanupAudioCapture();
-                return;
-        }
-    }
+    const handleStreamEvent = (event: PlutoVoiceSessionStreamEvent) => {
+        handlePlutoStreamEvent({
+            event,
+            appendTimelineEntry,
+            cleanupAudioCapture,
+            playIncomingAudioChunk,
+            publishError,
+            setSession,
+            setStreamState,
+            streamTerminalEventRef,
+        });
+    };
 
     async function sendAudioChunk(
         currentClientId: string,
@@ -663,200 +597,139 @@ export function PlutoVoiceSessionConsole({
                     ? 'flex w-full flex-col gap-3 text-left'
                     : 'mt-4 rounded-2xl border border-white/10 bg-slate-950/60 p-4'
             }>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                    <h4 className="text-sm font-semibold text-slate-100">
-                        {isOverlay ? 'Voice chat' : 'Live voice console'}
-                    </h4>
-                    <p className="mt-1 text-xs text-slate-400">
-                        {descriptionText}
-                    </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                    <Badge
-                        variant="secondary"
-                        className="border-white/10 bg-black/40 text-slate-300">
-                        <Radio className="mr-1 h-3.5 w-3.5" />
-                        {formatStreamState(streamState)}
-                    </Badge>
-                    <Badge
-                        variant="secondary"
-                        className="border-white/10 bg-black/40 text-slate-300">
-                        <Volume2 className="mr-1 h-3.5 w-3.5" />
-                        {isPlaying ? 'Pluto speaking' : 'Playback idle'}
-                    </Badge>
-                </div>
+            <div className="flex flex-wrap items-center gap-2">
+                <h4 className="mr-auto text-sm font-semibold text-slate-100">
+                    {isOverlay ? 'Voice chat' : 'Live voice console'}
+                </h4>
+                <Badge
+                    variant="secondary"
+                    className="border-white/10 bg-black/40 text-slate-300">
+                    <Radio className="mr-1 h-3.5 w-3.5" />
+                    {formatStreamState(streamState)}
+                </Badge>
+                <Badge
+                    variant="secondary"
+                    className="border-white/10 bg-black/40 text-slate-300">
+                    <Volume2 className="mr-1 h-3.5 w-3.5" />
+                    {isPlaying ? 'Pluto speaking' : 'Playback idle'}
+                </Badge>
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
                 <Button
                     size="sm"
-                    onClick={() => void toggleRecording()}
-                    disabled={
-                        !sessionId ||
-                        !clientId ||
-                        !isSpeaker ||
-                        streamState !== 'connected'
-                    }>
+                    onClick={() => {
+                        if (
+                            primaryAction.mode === 'take-mic' &&
+                            sessionId &&
+                            onRequestSpeaker
+                        ) {
+                            void (async () => {
+                                try {
+                                    setIsTakingMic(true);
+                                    publishInfo(
+                                        'Requesting the mic for this Pluto session…',
+                                    );
+                                    await onRequestSpeaker(sessionId);
+                                } catch (error) {
+                                    publishError(
+                                        error instanceof Error
+                                            ? error.message
+                                            : 'Failed to take the mic for this Pluto session.',
+                                    );
+                                } finally {
+                                    setIsTakingMic(false);
+                                }
+                            })();
+                            return;
+                        }
+
+                        void toggleRecording();
+                    }}
+                    disabled={primaryAction.disabled}>
                     {isRecording ? (
                         <MicOff className="mr-1.5 h-4 w-4" />
                     ) : (
                         <Mic className="mr-1.5 h-4 w-4" />
                     )}
-                    {isRecording ? 'Stop & send' : 'Record'}
+                    {primaryAction.label}
                 </Button>
                 <span className="text-xs text-slate-400">{recordingHint}</span>
             </div>
 
-            {roleStatus ? (
-                <div
-                    className={
-                        roleStatus.tone === 'accent'
-                            ? 'mt-3 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-xs text-cyan-100'
-                            : 'mt-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100'
-                    }>
-                    {roleStatus.message}
-                </div>
-            ) : null}
+            <VoiceConsoleSupportPanel
+                roleStatus={roleStatus}
+                isRecording={isRecording}
+                liveMicFeedback={liveMicFeedback}
+                micLevel={micLevel}
+                inlineNotice={inlineNotice}
+                canEnumerateDevices={canEnumerateDevices}
+                isOverlay={isOverlay}
+                availableInputs={availableInputs}
+                availableOutputs={availableOutputs}
+                selectedInputId={selectedInputId}
+                selectedOutputId={selectedOutputId}
+                canRouteOutputDevice={canRouteOutputDevice}
+                inputDeviceHint={inputDeviceHint}
+                onSelectInput={(nextValue) => {
+                    setSelectedInputId(nextValue);
+                    publishInfo(
+                        nextValue
+                            ? 'Microphone preference updated for Pluto voice chat.'
+                            : 'Microphone set to the system default input.',
+                    );
+                }}
+                onSelectOutput={(nextValue) => {
+                    setSelectedOutputId(nextValue);
+                    publishInfo(
+                        nextValue
+                            ? 'Playback device preference updated for Pluto voice chat.'
+                            : 'Playback set to the system default output.',
+                    );
+                }}
+            />
 
-            {isRecording ? (
-                <div className="mt-3 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                        <div>
-                            <div className="text-sm font-semibold text-emerald-200">
-                                Pluto is listening
-                            </div>
-                            <p className="mt-1 text-xs text-emerald-100/90">
-                                {liveMicFeedback}
-                            </p>
-                        </div>
-                        <MicLevelMeter level={micLevel} />
-                    </div>
-                </div>
-            ) : null}
-
-            {inlineNotice ? (
-                <div
-                    className={
-                        inlineNotice.tone === 'error'
-                            ? 'mt-3 rounded-2xl border border-red-400/30 bg-red-500/10 p-3 text-xs text-red-200'
-                            : 'mt-3 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-xs text-cyan-100'
-                    }>
-                    {inlineNotice.message}
-                </div>
-            ) : null}
-
-            {canEnumerateDevices ? (
-                <AudioDeviceControls
-                    isOverlay={isOverlay}
-                    availableInputs={availableInputs}
-                    availableOutputs={availableOutputs}
-                    selectedInputId={selectedInputId}
-                    selectedOutputId={selectedOutputId}
-                    canRouteOutputDevice={canRouteOutputDevice}
-                    onSelectInput={(nextValue) => {
-                        setSelectedInputId(nextValue);
-                        publishInfo(
-                            nextValue
-                                ? 'Microphone preference updated for Pluto voice chat.'
-                                : 'Microphone set to the system default input.',
-                        );
-                    }}
-                    onSelectOutput={(nextValue) => {
-                        setSelectedOutputId(nextValue);
-                        publishInfo(
-                            nextValue
-                                ? 'Playback device preference updated for Pluto voice chat.'
-                                : 'Playback set to the system default output.',
-                        );
-                    }}
-                />
-            ) : null}
-
-            {inputDeviceHint ? (
-                <p className="text-xs text-slate-500">{inputDeviceHint}</p>
-            ) : null}
-
-            <div
+            <ScrollArea
                 className={
                     isOverlay
-                        ? 'mt-1 grid gap-3'
-                        : 'mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]'
+                        ? 'mt-1 h-44 rounded-2xl border border-white/10 bg-black/30 p-3'
+                        : 'mt-4 h-56 rounded-2xl border border-white/10 bg-black/30 p-3'
                 }>
-                <ScrollArea
-                    className={
-                        isOverlay
-                            ? 'h-44 rounded-2xl border border-white/10 bg-black/30 p-3'
-                            : 'h-56 rounded-2xl border border-white/10 bg-black/30 p-3'
-                    }>
-                    <div className="space-y-3">
-                        {visibleTimeline.length === 0 ? (
-                            <div className="text-sm text-slate-500">
-                                Pluto is waiting for the first live event.
-                            </div>
-                        ) : (
-                            visibleTimeline.map((entry) => (
-                                <div
-                                    key={entry.id}
-                                    className={
-                                        isOverlay
-                                            ? 'rounded-2xl border border-white/8 bg-white/6 p-3'
-                                            : 'rounded-xl border border-white/8 bg-white/4 p-3'
-                                    }>
-                                    <div className="flex items-center justify-between gap-2">
-                                        <span
-                                            className={timelineToneClass(
-                                                entry.tone,
-                                            )}>
-                                            {entry.label}
-                                        </span>
-                                        <time className="text-[11px] text-slate-500">
-                                            {new Date(
-                                                entry.createdAt,
-                                            ).toLocaleTimeString()}
-                                        </time>
-                                    </div>
-                                    <p className="mt-1 text-sm text-slate-200">
-                                        {entry.text}
-                                    </p>
+                <div className="space-y-3">
+                    {visibleTimeline.length === 0 ? (
+                        <div className="text-sm text-slate-500">
+                            Pluto is waiting for the first live event.
+                        </div>
+                    ) : (
+                        visibleTimeline.map((entry) => (
+                            <div
+                                key={entry.id}
+                                className={
+                                    isOverlay
+                                        ? 'rounded-2xl border border-white/8 bg-white/6 p-3'
+                                        : 'rounded-xl border border-white/8 bg-white/4 p-3'
+                                }>
+                                <div className="flex items-center justify-between gap-2">
+                                    <span
+                                        className={timelineToneClass(
+                                            entry.tone,
+                                        )}>
+                                        {entry.label}
+                                    </span>
+                                    <time className="text-[11px] text-slate-500">
+                                        {new Date(
+                                            entry.createdAt,
+                                        ).toLocaleTimeString()}
+                                    </time>
                                 </div>
-                            ))
-                        )}
-                    </div>
-                </ScrollArea>
-
-                <div className="rounded-2xl border border-white/10 bg-black/25 p-3 text-xs text-slate-300">
-                    <div className="font-semibold text-slate-100">
-                        Session details
-                    </div>
-                    <dl className="mt-3 space-y-2">
-                        <div>
-                            <dt className="text-slate-500">Session</dt>
-                            <dd>
-                                {activeSession?.title ??
-                                    selectedSummary?.title ??
-                                    '—'}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt className="text-slate-500">Status</dt>
-                            <dd>
-                                {activeSession?.status ??
-                                    selectedSummary?.status ??
-                                    '—'}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt className="text-slate-500">Role</dt>
-                            <dd>{roleLabel}</dd>
-                        </div>
-                        <div>
-                            <dt className="text-slate-500">Clients</dt>
-                            <dd>{activeSession?.clients.length ?? '—'}</dd>
-                        </div>
-                    </dl>
+                                <p className="mt-1 text-sm text-slate-200">
+                                    {entry.text}
+                                </p>
+                            </div>
+                        ))
+                    )}
                 </div>
-            </div>
+            </ScrollArea>
         </div>
     );
 }
@@ -877,9 +750,7 @@ function buildSessionStreamUrl(
     return streamUrl.toString();
 }
 
-function formatStreamState(
-    streamState: 'idle' | 'connecting' | 'connected' | 'closed',
-) {
+function formatStreamState(streamState: StreamState) {
     switch (streamState) {
         case 'idle':
             return 'No session';
@@ -937,6 +808,248 @@ async function blobToBase64(blob: Blob) {
     return globalThis.btoa(binary);
 }
 
+function shouldReportUnexpectedDisconnect({
+    intentionalClose,
+    sawTerminalEvent,
+    sawTransportError,
+    wasClean,
+}: Readonly<{
+    intentionalClose: boolean;
+    sawTerminalEvent: boolean;
+    sawTransportError: boolean;
+    wasClean: boolean;
+}>) {
+    if (intentionalClose || sawTerminalEvent) {
+        return false;
+    }
+
+    return sawTransportError || !wasClean;
+}
+
+function handlePlutoStreamEvent({
+    event,
+    appendTimelineEntry,
+    cleanupAudioCapture,
+    playIncomingAudioChunk,
+    publishError,
+    setSession,
+    setStreamState,
+    streamTerminalEventRef,
+}: Readonly<{
+    event: PlutoVoiceSessionStreamEvent;
+    appendTimelineEntry: (
+        entry: Omit<VoiceTimelineEntry, 'id' | 'createdAt'>,
+    ) => void;
+    cleanupAudioCapture: () => void;
+    playIncomingAudioChunk: (base64: string, mimeType: string) => Promise<void>;
+    publishError: (message: string) => void;
+    setSession: Dispatch<SetStateAction<PlutoVoiceSession | null>>;
+    setStreamState: Dispatch<SetStateAction<StreamState>>;
+    streamTerminalEventRef: { current: 'error' | 'closed' | null };
+}>) {
+    switch (event.type) {
+        case 'session_snapshot':
+        case 'session_updated':
+            setSession(event.session);
+            return;
+        case 'input_transcription':
+            appendTimelineEntry({
+                label: 'You',
+                text: event.text,
+                tone: 'accent',
+            });
+            return;
+        case 'output_transcription':
+            appendTimelineEntry({
+                label: 'Pluto',
+                text: event.text,
+                tone: 'neutral',
+            });
+            return;
+        case 'audio_chunk':
+            void playIncomingAudioChunk(event.audioBase64, event.mimeType);
+            return;
+        case 'status':
+            appendTimelineEntry({
+                label: 'Status',
+                text: describeStatusEvent(event),
+                tone: 'neutral',
+            });
+            setSession((current) =>
+                current
+                    ? {
+                          ...current,
+                          status: event.status,
+                      }
+                    : current,
+            );
+            return;
+        case 'error':
+            streamTerminalEventRef.current = 'error';
+            appendTimelineEntry({
+                label: 'Error',
+                text: event.message,
+                tone: 'error',
+            });
+            publishError(event.message);
+            return;
+        case 'closed':
+            streamTerminalEventRef.current = 'closed';
+            appendTimelineEntry({
+                label: 'Closed',
+                text: event.reason ?? 'Session closed.',
+                tone: 'neutral',
+            });
+            setStreamState('closed');
+            cleanupAudioCapture();
+            return;
+    }
+}
+
+async function togglePlutoRecording({
+    appendTimelineEntry,
+    cleanupAudioCapture,
+    clientId,
+    isRecording,
+    isSpeaker,
+    mediaRecorderRef,
+    mediaStreamRef,
+    publishError,
+    publishInfo,
+    refreshAudioDevices,
+    selectedInputId,
+    sendAudioChunk,
+    sessionId,
+    setIsRecording,
+    socketRef,
+    startMicMonitor,
+    stopMediaStream,
+    stopRecording,
+}: Readonly<{
+    appendTimelineEntry: (
+        entry: Omit<VoiceTimelineEntry, 'id' | 'createdAt'>,
+    ) => void;
+    cleanupAudioCapture: () => void;
+    clientId: string | null;
+    isRecording: boolean;
+    isSpeaker: boolean | null | undefined;
+    mediaRecorderRef: { current: MediaRecorder | null };
+    mediaStreamRef: { current: MediaStream | null };
+    publishError: (message: string) => void;
+    publishInfo: (message: string) => void;
+    refreshAudioDevices: () => Promise<void>;
+    selectedInputId: string | null;
+    sendAudioChunk: (
+        currentClientId: string,
+        chunk: Blob,
+        fallbackMimeType: string,
+    ) => Promise<void>;
+    sessionId: string | null;
+    setIsRecording: Dispatch<SetStateAction<boolean>>;
+    socketRef: { current: WebSocket | null };
+    startMicMonitor: (stream: MediaStream) => Promise<void>;
+    stopMediaStream: () => void;
+    stopRecording: () => void;
+}>) {
+    if (isRecording) {
+        stopRecording();
+        return;
+    }
+
+    if (!sessionId || !clientId || !isSpeaker) {
+        publishError(
+            'Join the active Pluto session as speaker before talking.',
+        );
+        return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+        publishError(
+            'This browser environment does not expose microphone capture.',
+        );
+        return;
+    }
+
+    if (socketRef.current?.readyState !== WebSocket.OPEN) {
+        publishError('The Pluto session stream is not connected yet.');
+        return;
+    }
+
+    try {
+        const audioConstraints = selectedInputId
+            ? { deviceId: { exact: selectedInputId } }
+            : true;
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: audioConstraints,
+        });
+        mediaStreamRef.current = stream;
+        void refreshAudioDevices();
+        void startMicMonitor(stream);
+        const mimeType = pickRecordingMimeType();
+        const recorder = mimeType
+            ? new MediaRecorder(stream, { mimeType })
+            : new MediaRecorder(stream);
+        mediaRecorderRef.current = recorder;
+
+        recorder.addEventListener('dataavailable', (event) => {
+            if (event.data.size === 0 || !clientId) {
+                return;
+            }
+            void sendAudioChunk(clientId, event.data, recorder.mimeType);
+        });
+
+        recorder.addEventListener('stop', () => {
+            setIsRecording(false);
+            mediaRecorderRef.current = null;
+            stopMediaStream();
+            if (socketRef.current?.readyState === WebSocket.OPEN) {
+                socketRef.current.send(
+                    JSON.stringify({
+                        type: 'audio_stream_end',
+                        clientId,
+                    }),
+                );
+            }
+        });
+
+        recorder.start(250);
+        setIsRecording(true);
+        appendTimelineEntry({
+            label: 'Mic',
+            text: 'Recording started.',
+            tone: 'accent',
+        });
+        publishInfo(
+            'Recording started. Speak and tap again when you are done.',
+        );
+    } catch (error) {
+        cleanupAudioCapture();
+        publishError(
+            error instanceof Error
+                ? error.message
+                : 'Microphone capture failed',
+        );
+    }
+}
+
+function stopPlutoRecording(
+    mediaRecorderRef: { current: MediaRecorder | null },
+    appendTimelineEntry: (
+        entry: Omit<VoiceTimelineEntry, 'id' | 'createdAt'>,
+    ) => void,
+) {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') {
+        return;
+    }
+    recorder.stop();
+    appendTimelineEntry({
+        label: 'Mic',
+        text: 'Recording stopped. Sending to Pluto…',
+        tone: 'neutral',
+    });
+}
+
 function decodeBase64(base64: string) {
     const binary = globalThis.atob(base64);
     const bytes = new Uint8Array(binary.length);
@@ -985,12 +1098,16 @@ function parseSampleRate(mimeType: string, fallback: number) {
 function getRecordingHint(
     isSpeaker: boolean,
     hasSession: boolean,
+    canRequestSpeaker: boolean,
     isOverlay: boolean,
 ) {
     if (isSpeaker) {
         return isOverlay
             ? 'Press Record once to start and once more to stop and send.'
             : 'Press Record once to start and again to stop and send.';
+    }
+    if (canRequestSpeaker) {
+        return 'The mic is free. Tap Take mic to become the speaker.';
     }
     if (hasSession) {
         return 'This desktop client is currently observing. Rejoin as speaker to talk.';
@@ -1014,12 +1131,14 @@ function getRoleStatus({
     hasClient,
     hasSession,
     hasSpeaker,
+    canRequestSpeaker,
     isOverlay,
 }: Readonly<{
     isSpeaker: boolean;
     hasClient: boolean;
     hasSession: boolean;
     hasSpeaker: boolean;
+    canRequestSpeaker: boolean;
     isOverlay: boolean;
 }>) {
     if (!hasSession) {
@@ -1028,7 +1147,8 @@ function getRoleStatus({
     if (isSpeaker) {
         return {
             tone: 'accent' as const,
-            message: 'You have the mic. Hit Record, speak, then tap again to send your turn to Pluto.',
+            message:
+                'You have the mic. Hit Record, speak, then tap again to send your turn to Pluto.',
         };
     }
     if (hasSpeaker) {
@@ -1036,18 +1156,79 @@ function getRoleStatus({
             tone: 'neutral' as const,
             message: isOverlay
                 ? 'You are listening only right now. Open the dashboard and use “Take mic” when the current speaker is done.'
-                : 'You are listening only right now. Use the “Take mic” button in the session card when the mic becomes free.',
+                : 'You are listening only right now. The session card keeps “Take mic” visible and it will enable itself when the mic becomes free.',
+        };
+    }
+    if (canRequestSpeaker) {
+        return {
+            tone: 'accent' as const,
+            message:
+                'The mic is free. Tap “Take mic” below to become the speaker.',
         };
     }
     if (hasClient) {
         return {
-            tone: 'accent' as const,
-            message: 'The mic is free. Use “Take mic” in the session card above to become the speaker.',
+            tone: 'neutral' as const,
+            message:
+                'You are attached to the session, but the mic action is not available here yet.',
         };
     }
     return {
         tone: 'neutral' as const,
-        message: 'Join the session first, then choose whether you want to listen or take the mic.',
+        message:
+            'Join the session first, then choose whether you want to listen or take the mic.',
+    };
+}
+
+export function getVoiceConsolePrimaryAction({
+    canRequestSpeaker,
+    hasClient,
+    hasSession,
+    isRecording,
+    isSpeaker,
+    isTakingMic,
+    streamState,
+}: Readonly<{
+    canRequestSpeaker: boolean;
+    hasClient: boolean;
+    hasSession: boolean;
+    isRecording: boolean;
+    isSpeaker: boolean;
+    isTakingMic: boolean;
+    streamState: StreamState;
+}>) {
+    if (isTakingMic) {
+        return {
+            disabled: true,
+            label: 'Taking mic…',
+            mode: 'take-mic' as const,
+        };
+    }
+
+    if (isRecording) {
+        return {
+            disabled: false,
+            label: 'Stop & send',
+            mode: 'record' as const,
+        };
+    }
+
+    if (canRequestSpeaker) {
+        return {
+            disabled: streamState !== 'connected' || !hasSession || !hasClient,
+            label: 'Take mic',
+            mode: 'take-mic' as const,
+        };
+    }
+
+    return {
+        disabled:
+            streamState !== 'connected' ||
+            !hasSession ||
+            !hasClient ||
+            !isSpeaker,
+        label: 'Record',
+        mode: 'record' as const,
     };
 }
 
@@ -1092,10 +1273,10 @@ function AudioDeviceControls({
 }>) {
     const containerClassName = isOverlay
         ? 'grid gap-2 rounded-2xl border border-white/10 bg-black/20 p-3'
-        : 'mt-4 grid gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 md:grid-cols-2';
+        : 'mt-4 grid gap-3 rounded-2xl border border-white/10 bg-black/20 p-3';
     const noteClassName = isOverlay
         ? 'text-[11px] text-amber-300/90'
-        : 'text-xs text-amber-300/90 md:col-span-2';
+        : 'text-xs text-amber-300/90';
 
     return (
         <div className={containerClassName}>
@@ -1153,6 +1334,105 @@ function AudioDeviceControls({
                 </p>
             )}
         </div>
+    );
+}
+
+function VoiceConsoleSupportPanel({
+    roleStatus,
+    isRecording,
+    liveMicFeedback,
+    micLevel,
+    inlineNotice,
+    canEnumerateDevices,
+    isOverlay,
+    availableInputs,
+    availableOutputs,
+    selectedInputId,
+    selectedOutputId,
+    canRouteOutputDevice,
+    inputDeviceHint,
+    onSelectInput,
+    onSelectOutput,
+}: Readonly<{
+    roleStatus: {
+        tone: 'neutral' | 'accent';
+        message: string;
+    } | null;
+    isRecording: boolean;
+    liveMicFeedback: string;
+    micLevel: number;
+    inlineNotice: {
+        tone: 'neutral' | 'accent' | 'error';
+        message: string;
+    } | null;
+    canEnumerateDevices: boolean;
+    isOverlay: boolean;
+    availableInputs: MediaDeviceInfo[];
+    availableOutputs: MediaDeviceInfo[];
+    selectedInputId: string | null;
+    selectedOutputId: string | null;
+    canRouteOutputDevice: boolean;
+    inputDeviceHint: string | null;
+    onSelectInput: (deviceId: string | null) => void;
+    onSelectOutput: (deviceId: string | null) => void;
+}>) {
+    return (
+        <>
+            {roleStatus ? (
+                <div
+                    className={
+                        roleStatus.tone === 'accent'
+                            ? 'mt-3 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-xs text-cyan-100'
+                            : 'mt-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100'
+                    }>
+                    {roleStatus.message}
+                </div>
+            ) : null}
+
+            {isRecording ? (
+                <div className="mt-3 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                        <div>
+                            <div className="text-sm font-semibold text-emerald-200">
+                                Pluto is listening
+                            </div>
+                            <p className="mt-1 text-xs text-emerald-100/90">
+                                {liveMicFeedback}
+                            </p>
+                        </div>
+                        <MicLevelMeter level={micLevel} />
+                    </div>
+                </div>
+            ) : null}
+
+            {inlineNotice ? (
+                <div
+                    className={
+                        inlineNotice.tone === 'error'
+                            ? 'mt-3 rounded-2xl border border-red-400/30 bg-red-500/10 p-3 text-xs text-red-200'
+                            : 'mt-3 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-xs text-cyan-100'
+                    }>
+                    {inlineNotice.message}
+                </div>
+            ) : null}
+
+            {canEnumerateDevices ? (
+                <AudioDeviceControls
+                    isOverlay={isOverlay}
+                    availableInputs={availableInputs}
+                    availableOutputs={availableOutputs}
+                    selectedInputId={selectedInputId}
+                    selectedOutputId={selectedOutputId}
+                    canRouteOutputDevice={canRouteOutputDevice}
+                    onSelectInput={onSelectInput}
+                    onSelectOutput={onSelectOutput}
+                />
+            ) : null}
+
+            {inputDeviceHint ? (
+                <p className="text-xs text-slate-500">{inputDeviceHint}</p>
+            ) : null}
+        </>
     );
 }
 

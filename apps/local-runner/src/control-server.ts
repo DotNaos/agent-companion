@@ -2,16 +2,16 @@ import {
     DEFAULT_ACTIVITY_LIMIT,
     agentCompanionConfigSchema,
     approvalDecisionSchema,
-  plutoVoiceSessionEventEnvelopeSchema,
-  plutoVoiceSessionStreamClientMessageSchema,
     plutoVoiceSessionAttachInputSchema,
     plutoVoiceSessionCreateInputSchema,
     plutoVoiceSessionDetachInputSchema,
+    plutoVoiceSessionEventEnvelopeSchema,
+    plutoVoiceSessionStreamClientMessageSchema,
 } from "@agent-companion/shared";
 import express from "express";
 import http from "node:http";
-import { WebSocketServer } from "ws";
 import type { RawData } from "ws";
+import { WebSocketServer } from "ws";
 import type { RunnerState } from "./state.js";
 
 function decodeWebSocketMessage(rawData: RawData) {

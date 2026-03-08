@@ -586,6 +586,7 @@ function createContext() {
     REMOTE_SERVER_URL: "http://127.0.0.1:8787",
     RUNNER_TOKEN: "runner-token",
     RUNNER_ID: "runner-1",
+    LOG_LEVEL: "error",
     GEMINI_API_KEY: "",
     PLUTO_MODEL: "models/gemini-2.5-flash-native-audio-preview-12-2025",
     PLUTO_VOICE_NAME: "Achird",

@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CursorTracker } from "./cursor-tracker.js";
 import { loadDesktopEnv } from "./env.js";
+import { logger } from "./logger.js";
 import { shouldOverlayIgnoreMouseEvents } from "./overlay-hit-test.js";
 import { PlutoOrchestrator } from "./pluto-orchestrator.js";
 import { RunnerBridge } from "./runner-bridge.js";
@@ -44,7 +45,6 @@ let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let isQuitting = false;
-const debugLogPath = path.join(process.cwd(), "tmp", "desktop-main.log");
 const COMPACT_OVERLAY_BOUNDS = {
   width: 248,
   height: 248,
@@ -57,9 +57,6 @@ const EXPANDED_OVERLAY_BOUNDS = {
   marginRight: 16,
   marginBottom: 16,
 };
-
-fs.mkdirSync(path.dirname(debugLogPath), { recursive: true });
-
 ipcMain.on("agent-companion:set-ignore-mouse-events", (event, ignore) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) {
@@ -89,8 +86,21 @@ ipcMain.handle("agent-companion:select-directory", async () => {
 });
 
 function debugLog(message: string, details?: unknown) {
-  const line = `[${new Date().toISOString()}] ${message}${details ? ` ${JSON.stringify(details)}` : ""}\n`;
-  fs.appendFileSync(debugLogPath, line);
+  if (details === undefined) {
+    logger.info(message);
+    return;
+  }
+
+  logger.info({ details }, message);
+}
+
+function errorLog(message: string, details?: unknown) {
+  if (details === undefined) {
+    logger.error(message);
+    return;
+  }
+
+  logger.error({ details }, message);
 }
 
 const desktopServer = createDesktopServer({
@@ -102,7 +112,7 @@ const desktopServer = createDesktopServer({
   userStore,
   desktopToken,
 });
-void bootstrap();
+await bootstrap();
 
 app.on("window-all-closed", () => {
   // Keep the tray app resident; windows hide instead of terminating the companion.
@@ -145,7 +155,7 @@ async function bootstrap() {
     app.focus({ steal: true });
     debugLog("boot:focus-called");
   } catch (error) {
-    debugLog("boot:error", {
+    errorLog("boot:error", {
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -175,7 +185,7 @@ function createWindows() {
   });
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
     debugLog("windows:main-did-fail-load", { errorCode, errorDescription, validatedUrl });
-    console.error("mainWindow failed to load", { errorCode, errorDescription, validatedUrl });
+    errorLog("mainWindow failed to load", { errorCode, errorDescription, validatedUrl });
     mainWindow?.show();
     mainWindow?.focus();
   });
@@ -228,7 +238,7 @@ function createWindows() {
   });
   overlayWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
     debugLog("windows:overlay-did-fail-load", { errorCode, errorDescription, validatedUrl });
-    console.error("overlayWindow failed to load", { errorCode, errorDescription, validatedUrl });
+    errorLog("overlayWindow failed to load", { errorCode, errorDescription, validatedUrl });
   });
   overlayWindow.on("show", () => debugLog("windows:overlay-show"));
   overlayWindow.on("hide", () => debugLog("windows:overlay-hide"));

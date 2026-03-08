@@ -1,13 +1,14 @@
+import { DEFAULT_DESKTOP_SERVER_PORT, DEFAULT_LOCAL_RUNNER_PORT } from "@agent-companion/shared";
+import { parse as parseDotenv } from "dotenv";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parse as parseDotenv } from "dotenv";
 import { z } from "zod";
-import { DEFAULT_DESKTOP_SERVER_PORT, DEFAULT_LOCAL_RUNNER_PORT } from "@agent-companion/shared";
 
 const envSchema = z.object({
   DESKTOP_PORT: z.coerce.number().int().positive().default(DEFAULT_DESKTOP_SERVER_PORT),
   LOCAL_RUNNER_PORT: z.coerce.number().int().positive().default(DEFAULT_LOCAL_RUNNER_PORT),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   SESSION_SECRET: z.string().min(16).default("change-me-session-secret"),
   GOOGLE_OIDC_CLIENT_ID: z.string().default(""),
   GOOGLE_OIDC_CLIENT_SECRET: z.string().default(""),

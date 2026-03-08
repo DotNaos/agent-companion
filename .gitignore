@@ -9,6 +9,7 @@ dist
 .env.op.local
 coverage
 .turbo
+logs/
 *.log
 *.sqlite
 *.db

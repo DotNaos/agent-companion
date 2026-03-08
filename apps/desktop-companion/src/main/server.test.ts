@@ -5,8 +5,8 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
-import { WebSocket, WebSocketServer } from "ws";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { WebSocket, WebSocketServer } from "ws";
 import { signSession } from "./auth.js";
 import type { DesktopEnv } from "./env.js";
 import { createDesktopServer } from "./server.js";
@@ -198,6 +198,70 @@ describe("desktop admin server", () => {
     }
   });
 
+  it("preserves upstream Pluto stream close reasons for desktop clients", async () => {
+    const upstreamServer = http.createServer();
+    const upstreamWsServer = new WebSocketServer({ noServer: true });
+
+    upstreamServer.on("upgrade", (req, socket, head) => {
+      if (req.url !== "/internal/pluto/sessions/session-1/stream") {
+        socket.destroy();
+        return;
+      }
+      upstreamWsServer.handleUpgrade(req, socket, head, (ws) => {
+        upstreamWsServer.emit("connection", ws);
+      });
+    });
+
+    upstreamWsServer.on("connection", (ws) => {
+      ws.close(1011, "runner_stream_failed");
+    });
+
+    await new Promise<void>((resolve) => {
+      upstreamServer.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const upstreamAddress = upstreamServer.address();
+    const upstreamPort =
+      typeof upstreamAddress === "object" && upstreamAddress ? upstreamAddress.port : 0;
+    const { server } = createTestServer({
+      allowedOrigins: ["https://admin.example.com"],
+      localRunnerPort: upstreamPort,
+    });
+
+    try {
+      await server.listen();
+      const desktopAddress = server.server.address();
+      const desktopPort =
+        typeof desktopAddress === "object" && desktopAddress ? desktopAddress.port : 0;
+
+      const closeEvent = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        const ws = new WebSocket(
+          `ws://127.0.0.1:${desktopPort}/api/desktop/pluto/sessions/session-1/stream?desktopToken=desktop-token`,
+        );
+
+        ws.on("close", (code, reason) => {
+          resolve({
+            code,
+            reason: reason.toString("utf8"),
+          });
+        });
+
+        ws.on("error", reject);
+      });
+
+      expect(closeEvent).toEqual({
+        code: 1011,
+        reason: "runner_stream_failed",
+      });
+    } finally {
+      await server.close();
+      upstreamWsServer.close();
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
 
 });
 
@@ -213,6 +277,7 @@ function createTestServer({
   const env: DesktopEnv = {
     DESKTOP_PORT: 0,
     LOCAL_RUNNER_PORT: localRunnerPort,
+    LOG_LEVEL: "error",
     SESSION_SECRET: "super-secret-session-key",
     GOOGLE_OIDC_CLIENT_ID: "",
     GOOGLE_OIDC_CLIENT_SECRET: "",

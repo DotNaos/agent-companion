@@ -1,17 +1,18 @@
-import http from "node:http";
-import pino from "pino";
-import { WebSocketServer } from "ws";
-import type { NextFunction, Request, Response } from "express";
+import { AppError, toErrorEnvelope } from "@agent-companion/shared";
+import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
+import {
+    createOAuthMetadata,
+    getOAuthProtectedResourceMetadataUrl,
+    mcpAuthRouter,
+} from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import {
-  createOAuthMetadata,
-  getOAuthProtectedResourceMetadataUrl,
-  mcpAuthRouter,
-} from "@modelcontextprotocol/sdk/server/auth/router.js";
-import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
-import { AppError, toErrorEnvelope } from "@agent-companion/shared";
+import type { NextFunction, Request, Response } from "express";
+import http from "node:http";
+import type { Duplex } from "node:stream";
+import { WebSocketServer } from "ws";
 import { loadRemoteEnv, type RemoteEnv } from "./env.js";
+import { createRemoteLogger } from "./logger.js";
 import { createMcpToolServer } from "./mcp-server.js";
 import { RemoteOAuthProvider } from "./oauth-provider.js";
 import { RelayRegistry } from "./relay-registry.js";
@@ -23,7 +24,7 @@ interface CreateRemoteMcpAppOptions {
 
 export function createRemoteMcpApp(options: CreateRemoteMcpAppOptions = {}) {
   const env = options.env ?? loadRemoteEnv();
-  const logger = pino({ level: env.LOG_LEVEL });
+  const logger = createRemoteLogger(env.LOG_LEVEL);
   const relayRegistry = options.relayRegistry ?? new RelayRegistry(env.REQUEST_TIMEOUT_MS);
 
   const publicBaseUrl = new URL("/", env.REMOTE_PUBLIC_BASE_URL);
@@ -99,6 +100,13 @@ export function createRemoteMcpApp(options: CreateRemoteMcpAppOptions = {}) {
   });
 
   app.get("/health", (_req, res) => {
+    logger.debug(
+      {
+        runnerConnected: relayRegistry.isRunnerConnected(),
+        runnerId: relayRegistry.getRunnerId(),
+      },
+      "health_checked",
+    );
     res.json({
       status: "ok",
       runnerConnected: relayRegistry.isRunnerConnected(),
@@ -194,13 +202,22 @@ export function createRemoteMcpApp(options: CreateRemoteMcpAppOptions = {}) {
   server.on("upgrade", (req, socket, head) => {
     const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
     if (requestUrl.pathname !== "/runner/connect") {
-      socket.destroy();
+      rejectUpgrade(socket, 404, "Runner relay endpoint not found.");
       return;
     }
 
     const authHeader = req.headers.authorization;
-    if (authHeader !== `Bearer ${env.RUNNER_TOKEN}`) {
-      socket.destroy();
+    const runnerTokenHeader = getRunnerTokenHeader(req);
+    if (authHeader !== `Bearer ${env.RUNNER_TOKEN}` && runnerTokenHeader !== env.RUNNER_TOKEN) {
+      logger.warn(
+        {
+          hasAuthorizationHeader: Boolean(authHeader),
+          hasRunnerTokenHeader: Boolean(runnerTokenHeader),
+          runnerId: requestUrl.searchParams.get("runnerId") ?? "unknown-runner",
+        },
+        "runner_upgrade_rejected",
+      );
+      rejectUpgrade(socket, 401, "Runner relay authentication failed. Check RUNNER_TOKEN on both the remote MCP server and local runner.");
       return;
     }
 
@@ -210,9 +227,28 @@ export function createRemoteMcpApp(options: CreateRemoteMcpAppOptions = {}) {
   });
 
   runnerWs.on("connection", (socket, runnerId) => {
-    logger.info({ runnerId }, "runner_connected");
-    relayRegistry.attachRunner(socket, String(runnerId));
-    socket.on("close", () => logger.warn({ runnerId }, "runner_disconnected"));
+    const resolvedRunnerId = typeof runnerId === "string" ? runnerId : "unknown-runner";
+    logger.info({ runnerId: resolvedRunnerId }, "runner_connected");
+    relayRegistry.attachRunner(socket, resolvedRunnerId);
+    socket.on("close", (code, reasonBuffer) => {
+      logger.warn(
+        {
+          runnerId: resolvedRunnerId,
+          code,
+          reason: reasonBuffer.toString("utf8").trim() || null,
+        },
+        "runner_disconnected",
+      );
+    });
+    socket.on("error", (error) => {
+      logger.error(
+        {
+          runnerId: resolvedRunnerId,
+          err: error,
+        },
+        "runner_socket_error",
+      );
+    });
   });
 
   return {
@@ -223,4 +259,27 @@ export function createRemoteMcpApp(options: CreateRemoteMcpAppOptions = {}) {
     relayRegistry,
     server,
   };
+}
+
+function getRunnerTokenHeader(req: http.IncomingMessage) {
+  const header = req.headers["x-agent-companion-runner-token"];
+  return typeof header === "string" ? header : null;
+}
+
+function rejectUpgrade(socket: Duplex, statusCode: number, message: string) {
+  const statusText = http.STATUS_CODES[statusCode] ?? "Error";
+  const body = JSON.stringify({
+    error: message,
+  });
+
+  socket.end(
+    [
+      `HTTP/1.1 ${statusCode} ${statusText}`,
+      "Connection: close",
+      "Content-Type: application/json; charset=utf-8",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "",
+      body,
+    ].join("\r\n"),
+  );
 }

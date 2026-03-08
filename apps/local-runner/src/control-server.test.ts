@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { WebSocket, type RawData } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
+import { WebSocket, type RawData } from "ws";
 import { startControlServer } from "./control-server.js";
 import type { RunnerEnv } from "./env.js";
 import { RunnerState } from "./state.js";
@@ -166,6 +166,7 @@ function createContext() {
     REMOTE_SERVER_URL: "http://127.0.0.1:8787",
     RUNNER_TOKEN: "runner-token",
     RUNNER_ID: "runner-1",
+    LOG_LEVEL: "error",
     GEMINI_API_KEY: "",
     PLUTO_MODEL: "models/gemini-2.5-flash-native-audio-preview-12-2025",
     PLUTO_VOICE_NAME: "Achird",

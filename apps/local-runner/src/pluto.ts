@@ -1,16 +1,16 @@
 import {
     notifyPlutoInputSchema,
     plutoCommentaryInputSchema,
-	plutoVoiceSessionAudioChunkSchema,
-	plutoVoiceSessionStreamEventSchema,
     plutoMessageSchema,
+    plutoVoiceSessionAudioChunkSchema,
+    plutoVoiceSessionStreamEventSchema,
     type NotifyPlutoInput,
     type PlutoCommentaryInput,
     type PlutoDelivery,
     type PlutoMessage,
     type PlutoTone,
-	type PlutoVoiceSessionAudioChunk,
-	type PlutoVoiceSessionStreamEvent,
+    type PlutoVoiceSessionAudioChunk,
+    type PlutoVoiceSessionStreamEvent,
 } from "@agent-companion/shared";
 import {
     GoogleGenAI,
@@ -23,6 +23,7 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import type { RunnerEnv } from "./env.js";
+import { logger } from "./logger.js";
 
 interface InlineImageInput {
 	data: string;
@@ -245,10 +246,12 @@ export class PlutoService {
 
 	registerVoiceSession(sessionId: string, registration: PlutoVoiceSessionRegistration) {
 		this.voiceSessionRegistrations.set(sessionId, registration);
+			logger.info({ sessionId }, "pluto_voice_session_registered");
 	}
 
 	unregisterVoiceSession(sessionId: string) {
 		this.voiceSessionRegistrations.delete(sessionId);
+			logger.info({ sessionId }, "pluto_voice_session_unregistered");
 		const runtime = this.voiceSessionRuntimes.get(sessionId);
 		if (runtime) {
 			runtime.close();
@@ -380,7 +383,7 @@ export class PlutoService {
 		if (isLiveModel && useAudio) {
 			const turn = buildLiveTurn(prompt, inlineImage);
 			const response = await this.runLiveTurn(turn, [Modality.AUDIO], useAudio).catch((e) => {
-				console.error("Pluto Live turn failed:", e);
+				logger.error({ err: e }, "pluto_live_turn_failed");
 				return null;
 			});
 
@@ -544,7 +547,10 @@ Do not repeat these phrases or sentiments. Keep your commentary fresh and divers
 
 			return extractResponseText(response);
 		} catch (error) {
-			console.error("Pluto API generation failed:", error instanceof Error ? error.message : error);
+			logger.error(
+				{ err: error instanceof Error ? error : undefined, error },
+				"pluto_api_generation_failed",
+			);
 			return "";
 		}
 	}
@@ -673,6 +679,7 @@ Do not repeat these phrases or sentiments. Keep your commentary fresh and divers
 
 		const runtime = new PlutoVoiceSessionRuntime(this.ai, this.env, sessionId, registration.emit);
 		this.voiceSessionRuntimes.set(sessionId, runtime);
+		logger.info({ sessionId }, "pluto_voice_session_runtime_created");
 		return runtime;
 	}
 }

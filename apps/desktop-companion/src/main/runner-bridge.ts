@@ -5,6 +5,7 @@ import {
     approvalDecisionSchema,
     approvalRequestSchema,
     plutoCommentaryInputSchema,
+    plutoStateSchema,
     plutoVoiceSessionAttachInputSchema,
     plutoVoiceSessionAttachOutputSchema,
     plutoVoiceSessionCloseOutputSchema,
@@ -13,12 +14,11 @@ import {
     plutoVoiceSessionDetachInputSchema,
     plutoVoiceSessionDetachOutputSchema,
     plutoVoiceSessionSummarySchema,
-    plutoStateSchema,
     runnerStatusSchema,
 } from "@agent-companion/shared";
 import { EventEmitter } from "node:events";
-import { WebSocket } from "ws";
 import type { RawData } from "ws";
+import { WebSocket } from "ws";
 
 function decodeWebSocketMessage(data: RawData) {
   if (typeof data === "string") {

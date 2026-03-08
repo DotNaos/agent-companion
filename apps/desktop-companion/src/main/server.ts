@@ -390,20 +390,22 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
 
     upstream.on("error", (error) => {
       if (ws.readyState === WebSocket.OPEN) {
+        const message = error instanceof Error ? error.message : "Desktop Pluto session proxy failed";
         ws.send(
           JSON.stringify({
             type: "error",
             code: "PLUTO_DESKTOP_PROXY_ERROR",
-            message: error instanceof Error ? error.message : "Desktop Pluto session proxy failed",
+            message,
           }),
         );
+        ws.close(1011, limitCloseReason(message));
       }
-      ws.close();
     });
 
-    upstream.on("close", () => {
+    upstream.on("close", (code, reasonBuffer) => {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
+        const reason = reasonBuffer.toString("utf8").trim();
+        ws.close(normalizeCloseCode(code), reason ? limitCloseReason(reason) : undefined);
       }
     });
 
@@ -438,6 +440,17 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
       });
     },
   };
+}
+
+function normalizeCloseCode(code: number) {
+  if (code >= 1000 && code <= 4999 && code !== 1005 && code !== 1006 && code !== 1015) {
+    return code;
+  }
+  return 1000;
+}
+
+function limitCloseReason(reason: string) {
+  return reason.slice(0, 123);
 }
 
 function getRouteParam(value: string | string[] | undefined) {

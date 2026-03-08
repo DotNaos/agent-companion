@@ -1,36 +1,38 @@
 {
-  "name": "agent-companion",
-  "version": "0.1.0",
-  "private": true,
-  "packageManager": "pnpm@10.11.0",
-  "scripts": {
-    "build": "turbo run build",
-    "dev": "turbo run dev",
-    "test": "turbo run test",
-    "typecheck": "turbo run typecheck"
-  },
-  "devDependencies": {
-    "@types/cookie-parser": "^1.4.10",
-    "@types/express": "^5.0.3",
-    "@types/node": "^24.8.1",
-    "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
-    "@types/supertest": "^6.0.3",
-    "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "^5.0.4",
-    "cross-env": "^10.1.0",
-    "dotenv": "^16.6.1",
-    "supertest": "^7.1.4",
-    "tsx": "^4.20.6",
-    "turbo": "^2.8.14",
-    "typescript": "^5.9.3",
-    "vite": "^7.1.10",
-    "vitest": "^3.2.4"
-  },
-  "dependencies": {
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.5.0",
-    "@types/three": "^0.183.1",
-    "three": "^0.183.2"
-  }
+    "name": "agent-companion",
+    "version": "0.1.0",
+    "private": true,
+    "packageManager": "pnpm@10.11.0",
+    "scripts": {
+        "build": "turbo run build",
+        "logs:clean": "node ./scripts/clean-logs.mjs",
+        "dev": "node ./scripts/run-with-dev-log.mjs workspace -- turbo run dev",
+        "test": "turbo run test",
+        "typecheck": "turbo run typecheck"
+    },
+    "devDependencies": {
+        "@types/cookie-parser": "^1.4.10",
+        "@types/express": "^5.0.3",
+        "@types/node": "^24.8.1",
+        "@types/react": "^19.2.2",
+        "@types/react-dom": "^19.2.2",
+        "@types/supertest": "^6.0.3",
+        "@types/ws": "^8.18.1",
+        "@vitejs/plugin-react": "^5.0.4",
+        "cross-env": "^10.1.0",
+        "dotenv": "^16.6.1",
+        "supertest": "^7.1.4",
+        "tsx": "^4.20.6",
+        "turbo": "^2.8.14",
+        "typescript": "^5.9.3",
+        "vite": "^7.1.10",
+        "vitest": "^3.2.4"
+    },
+    "dependencies": {
+        "@react-three/drei": "^10.7.7",
+        "@react-three/fiber": "^9.5.0",
+        "@types/three": "^0.183.1",
+        "lucide-react": "^0.577.0",
+        "three": "^0.183.2"
+    }
 }

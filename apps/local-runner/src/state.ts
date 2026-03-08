@@ -17,10 +17,10 @@ import {
     normalizeAbsolutePath,
     notifyPlutoInputSchema,
     plutoCommentaryInputSchema,
-    plutoVoiceSessionAudioChunkSchema,
-    plutoVoiceSessionAudioStreamEndInputSchema,
     plutoStateSchema,
     plutoVoiceSessionAttachInputSchema,
+    plutoVoiceSessionAudioChunkSchema,
+    plutoVoiceSessionAudioStreamEndInputSchema,
     plutoVoiceSessionClientSchema,
     plutoVoiceSessionCreateInputSchema,
     plutoVoiceSessionEventEnvelopeSchema,
@@ -59,6 +59,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { RunnerEnv } from "./env.js";
+import { logger } from "./logger.js";
 import { PlutoService } from "./pluto.js";
 import { ProcessManager } from "./process-manager.js";
 
@@ -479,6 +480,13 @@ export class RunnerState {
     }
     fs.mkdirSync(path.dirname(this.env.ACTIVITY_LOG_PATH), { recursive: true });
     fs.appendFileSync(this.env.ACTIVITY_LOG_PATH, `${JSON.stringify(entry)}\n`, "utf8");
+    logger[level](
+      {
+        activityType: type,
+        data,
+      },
+      message,
+    );
     this.events.emit("activity", entry);
   }
 

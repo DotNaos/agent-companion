@@ -1,11 +1,11 @@
 import type {
-  ActivityEvent,
-  AgentCompanionConfig,
-  ApprovalRequest,
-  PlutoMessage,
-  PlutoState,
-  PlutoVoiceSessionSummary,
-  RunnerStatus,
+    ActivityEvent,
+    AgentCompanionConfig,
+    ApprovalRequest,
+    PlutoMessage,
+    PlutoState,
+    PlutoVoiceSessionSummary,
+    RunnerStatus,
 } from "@agent-companion/shared";
 
 export type Bootstrap = {
