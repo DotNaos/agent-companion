@@ -35,6 +35,11 @@ import {
 } from './PlutoVoiceSessionConsole.stream.js';
 import { appendVoiceTimelineEntry } from './PlutoVoiceSessionConsole.timeline.js';
 
+const AUTO_SCROLL_THRESHOLD_PX = 160;
+const AUTO_SCROLL_DURATION_MS = 180;
+const MIC_LEVEL_UPDATE_INTERVAL_MS = 80;
+const MIC_LEVEL_DELTA_THRESHOLD = 0.035;
+
 export function usePlutoVoiceSessionConsole({
     apiBase,
     clientId,
@@ -70,8 +75,12 @@ export function usePlutoVoiceSessionConsole({
     const micMonitorAnimationFrameRef = useRef<number | null>(null);
     const micMonitorContextRef = useRef<AudioContext | null>(null);
     const micMonitorSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-    const panelTimelineEndRef = useRef<HTMLDivElement | null>(null);
-    const expandedTimelineEndRef = useRef<HTMLDivElement | null>(null);
+    const panelScrollAreaRef = useRef<HTMLDivElement | null>(null);
+    const expandedScrollAreaRef = useRef<HTMLDivElement | null>(null);
+    const panelScrollAnimationFrameRef = useRef<number | null>(null);
+    const expandedScrollAnimationFrameRef = useRef<number | null>(null);
+    const lastCommittedMicLevelRef = useRef(0);
+    const lastMicLevelCommitAtRef = useRef(0);
     const intentionalSocketCloseRef = useRef(false);
     const transportErrorRef = useRef(false);
     const streamTerminalEventRef = useRef<'error' | 'closed' | null>(null);
@@ -138,6 +147,8 @@ export function usePlutoVoiceSessionConsole({
         hasSession: Boolean(sessionId),
         isSpeaker,
     });
+    const visibleTimelineTailKey = buildTimelineTailKey(visibleTimeline);
+    const fullTimelineTailKey = buildTimelineTailKey(timeline);
 
     useEffect(() => {
         setSession(null);
@@ -216,28 +227,32 @@ export function usePlutoVoiceSessionConsole({
     }, [apiBase, desktopToken, onError, sessionId]);
 
     useEffect(() => {
-        if (!visibleTimeline.length) {
+        if (!visibleTimelineTailKey && !fullTimelineTailKey) {
             return;
         }
 
         const frame = globalThis.requestAnimationFrame(() => {
-            panelTimelineEndRef.current?.scrollIntoView({
-                block: 'end',
-                behavior: 'auto',
-            });
+            const panelViewport = getScrollViewport(panelScrollAreaRef.current);
+            smoothScrollViewportToBottom(
+                panelViewport,
+                panelScrollAnimationFrameRef,
+            );
 
             if (isChatExpanded) {
-                expandedTimelineEndRef.current?.scrollIntoView({
-                    block: 'end',
-                    behavior: 'auto',
-                });
+                const expandedViewport = getScrollViewport(
+                    expandedScrollAreaRef.current,
+                );
+                smoothScrollViewportToBottom(
+                    expandedViewport,
+                    expandedScrollAnimationFrameRef,
+                );
             }
         });
 
         return () => {
             globalThis.cancelAnimationFrame(frame);
         };
-    }, [isChatExpanded, visibleTimeline.length, timeline]);
+    }, [fullTimelineTailKey, isChatExpanded, visibleTimelineTailKey]);
 
     const appendTimelineEntry = (entry: VoiceTimelineDraftEntry) =>
         setTimeline((current) => appendVoiceTimelineEntry(current, entry));
@@ -301,6 +316,9 @@ export function usePlutoVoiceSessionConsole({
             return false;
         }
 
+        playback.stopPlayback();
+        setActiveStatusMessage('Interrupting Pluto and sending your text…');
+
         appendStandaloneTimelineEntry({
             actor: 'you',
             label: 'You',
@@ -354,6 +372,11 @@ export function usePlutoVoiceSessionConsole({
     }
 
     async function toggleRecording(mode: RecordingMode = 'push-to-talk') {
+        if (!isRecording) {
+            playback.stopPlayback();
+            setActiveStatusMessage('Interrupting Pluto and opening your mic…');
+        }
+
         await togglePlutoRecording({
             appendTimelineEntry,
             cleanupAudioCapture,
@@ -388,6 +411,8 @@ export function usePlutoVoiceSessionConsole({
         mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
         setMicLevel(0);
+        lastCommittedMicLevelRef.current = 0;
+        lastMicLevelCommitAtRef.current = 0;
     }
 
     async function startMicMonitor(stream: MediaStream) {
@@ -430,7 +455,18 @@ export function usePlutoVoiceSessionConsole({
                     1,
                     deviation / (samples.length * 24),
                 );
-                setMicLevel(normalized);
+                const now = performance.now();
+                const lastLevel = lastCommittedMicLevelRef.current;
+                if (
+                    Math.abs(normalized - lastLevel) >=
+                        MIC_LEVEL_DELTA_THRESHOLD &&
+                    now - lastMicLevelCommitAtRef.current >=
+                        MIC_LEVEL_UPDATE_INTERVAL_MS
+                ) {
+                    lastCommittedMicLevelRef.current = normalized;
+                    lastMicLevelCommitAtRef.current = now;
+                    setMicLevel(normalized);
+                }
                 micMonitorAnimationFrameRef.current =
                     globalThis.requestAnimationFrame(pumpLevel);
             };
@@ -458,6 +494,9 @@ export function usePlutoVoiceSessionConsole({
         if (ctx) {
             void ctx.close().catch(() => undefined);
         }
+
+        cancelScrollAnimation(panelScrollAnimationFrameRef);
+        cancelScrollAnimation(expandedScrollAnimationFrameRef);
     }
 
     return {
@@ -466,7 +505,7 @@ export function usePlutoVoiceSessionConsole({
         audioDevices,
         canRequestSpeaker,
         currentSpeakerClientId,
-        expandedTimelineEndRef,
+        expandedScrollAreaRef,
         inlineNotice,
         inputPlaceholder,
         isChatExpanded,
@@ -477,7 +516,7 @@ export function usePlutoVoiceSessionConsole({
         isTakingMic,
         liveMicFeedback,
         micLevel,
-        panelTimelineEndRef,
+        panelScrollAreaRef,
         primaryAction,
         recordingHint,
         recordingMode,
@@ -494,4 +533,83 @@ export function usePlutoVoiceSessionConsole({
         requestMic,
         visibleTimeline,
     };
+}
+
+function buildTimelineTailKey(entries: VoiceTimelineEntry[]) {
+    const lastEntry = entries.at(-1);
+    if (!lastEntry) {
+        return '';
+    }
+
+    return `${lastEntry.id}:${lastEntry.text}:${entries.length}`;
+}
+
+function getScrollViewport(root: HTMLDivElement | null) {
+    if (!root) {
+        return null;
+    }
+
+    return root.querySelector<HTMLDivElement>(
+        '[data-radix-scroll-area-viewport]',
+    );
+}
+
+function smoothScrollViewportToBottom(
+    viewport: HTMLDivElement | null,
+    animationFrameRef: { current: number | null },
+) {
+    if (!viewport || !shouldAutoScroll(viewport)) {
+        return;
+    }
+
+    cancelScrollAnimation(animationFrameRef);
+
+    const startTop = viewport.scrollTop;
+    const targetTop = viewport.scrollHeight - viewport.clientHeight;
+    if (targetTop <= startTop) {
+        return;
+    }
+
+    const startedAt = performance.now();
+
+    const tick = (now: number) => {
+        const progress = Math.min(
+            1,
+            (now - startedAt) / AUTO_SCROLL_DURATION_MS,
+        );
+        viewport.scrollTop = interpolateEaseOutCubic(
+            startTop,
+            targetTop,
+            progress,
+        );
+
+        if (progress < 1) {
+            animationFrameRef.current = globalThis.requestAnimationFrame(tick);
+            return;
+        }
+
+        animationFrameRef.current = null;
+    };
+
+    animationFrameRef.current = globalThis.requestAnimationFrame(tick);
+}
+
+function shouldAutoScroll(viewport: HTMLDivElement) {
+    const distanceFromBottom =
+        viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    return distanceFromBottom <= AUTO_SCROLL_THRESHOLD_PX;
+}
+
+function cancelScrollAnimation(animationFrameRef: { current: number | null }) {
+    if (animationFrameRef.current === null) {
+        return;
+    }
+
+    globalThis.cancelAnimationFrame(animationFrameRef.current);
+    animationFrameRef.current = null;
+}
+
+function interpolateEaseOutCubic(start: number, end: number, progress: number) {
+    const eased = 1 - (1 - progress) ** 3;
+    return start + (end - start) * eased;
 }

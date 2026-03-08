@@ -85,6 +85,7 @@ export function handlePlutoStreamEvent({
                 label: 'You',
                 text: event.text,
                 tone: 'accent',
+                turnId: event.turnId,
             });
             return;
         case 'output_transcription':
@@ -108,6 +109,55 @@ export function handlePlutoStreamEvent({
         case 'output_turn_complete':
             setActiveStatusMessage('Pluto finished this response.');
             markOutputTurnComplete(event.turnId);
+            return;
+        case 'tool_call':
+            setActiveStatusMessage(`Pluto uses ${event.toolName}…`);
+            appendTimelineEntry({
+                actor: 'system',
+                label: 'Tool',
+                text: `Calling ${event.toolName}: ${event.summary}`,
+                tone: 'accent',
+            });
+            return;
+        case 'tool_result':
+            setActiveStatusMessage(
+                event.ok
+                    ? `${event.toolName} finished.`
+                    : `${event.toolName} failed.`,
+            );
+            appendTimelineEntry({
+                actor: 'system',
+                label: event.ok ? 'Tool' : 'Tool error',
+                text: event.summary,
+                tone: event.ok ? 'neutral' : 'error',
+            });
+            return;
+        case 'approval_requested':
+            setActiveStatusMessage(
+                `Approval needed for ${event.toolName}.`,
+            );
+            appendTimelineEntry({
+                actor: 'system',
+                label: 'Approval',
+                text: `${event.summary} Approve it in the desktop overlay to let Pluto continue.`,
+                tone: 'accent',
+            });
+            return;
+        case 'approval_resolved':
+            setActiveStatusMessage(
+                event.decision === 'approved'
+                    ? `${event.toolName} approved.`
+                    : `${event.toolName} denied.`,
+            );
+            appendTimelineEntry({
+                actor: 'system',
+                label: 'Approval',
+                text:
+                    event.decision === 'approved'
+                        ? `Approval granted for ${event.toolName}. Pluto continues.`
+                        : `Approval denied for ${event.toolName}. Pluto cannot continue with that action.`,
+                tone: event.decision === 'approved' ? 'accent' : 'error',
+            });
             return;
         case 'status':
             if (event.interrupted) {

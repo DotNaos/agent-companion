@@ -83,6 +83,7 @@ const todoStoreSchema = z.object({
 
 interface PendingApproval extends ApprovalRequest {
   grantKey: string;
+  plutoVoiceSessionId?: string | null;
   rememberTarget?:
     | {
         type: "path-capability";
@@ -118,7 +119,14 @@ export class RunnerState {
   private lastSeenAt: string | null = null;
 
   constructor(private readonly env: RunnerEnv) {
-    this.plutoService = new PlutoService(env);
+    this.plutoService = new PlutoService(env, async (toolName, payload, context) =>
+      this.handlePlutoVoiceToolRequest(
+        context?.sessionId ?? null,
+        context?.toolCallId ?? null,
+        toolName,
+        payload,
+      ),
+    );
     this.configStore = new FileBackedStore(
       env.CONFIG_PATH,
       agentCompanionConfigSchema,
@@ -425,14 +433,28 @@ export class RunnerState {
       const payload = schema.parse(parsed.payload);
       let data;
       try {
-        data = await this.executeTool(parsed.toolName, payload, parsed.actor.email, bypassPolicy, grantKey);
+        data = await this.executeTool(
+          parsed.toolName,
+          payload,
+          parsed.actor.email,
+          parsed.actor.subject,
+          bypassPolicy,
+          grantKey,
+        );
       } catch (error) {
         const shouldRetry = await this.handlePolicyError(error, parsed, grantKey);
         if (!shouldRetry) {
           throw error;
         }
         const retryBypass = this.consumeApprovedGrant(grantKey);
-        data = await this.executeTool(parsed.toolName, payload, parsed.actor.email, retryBypass, grantKey);
+        data = await this.executeTool(
+          parsed.toolName,
+          payload,
+          parsed.actor.email,
+          parsed.actor.subject,
+          retryBypass,
+          grantKey,
+        );
       }
       return {
         ok: true,
@@ -465,6 +487,17 @@ export class RunnerState {
     } else {
       this.logActivity("approval", `Approval denied for ${approval.toolName}`, { approvalId: approval.id }, "warn");
     }
+    if (approval.plutoVoiceSessionId) {
+      this.emitPlutoVoiceEvent({
+        sessionId: approval.plutoVoiceSessionId,
+        event: {
+          type: "approval_resolved",
+          approvalId: approval.id,
+          toolName: approval.toolName,
+          decision: decision.decision,
+        },
+      });
+    }
     const waiters = this.approvalWaiters.get(decision.id) ?? [];
     for (const resolve of waiters) {
       resolve(decision.decision);
@@ -483,6 +516,25 @@ export class RunnerState {
       this.approvalWaiters.delete(approvalId);
     }
     this.processManager.shutdown();
+  }
+
+  private async handlePlutoVoiceToolRequest(
+    sessionId: string | null,
+    _toolCallId: string | null,
+    toolName: ToolName,
+    payload: unknown,
+  ) {
+    return this.handleRelayRequest({
+      requestId: randomUUID(),
+      toolName,
+      payload,
+      actor: {
+        email: "pluto@local.agent-companion.invalid",
+        subject: sessionId
+          ? `pluto-voice-session:${sessionId}`
+          : "pluto-local-runner",
+      },
+    });
   }
 
   logActivity(
@@ -722,6 +774,7 @@ export class RunnerState {
     toolName: ToolName,
     payload: unknown,
     actorEmail: string,
+    actorSubject: string,
     bypassPolicy: boolean,
     grantKey: string,
   ) {
@@ -747,7 +800,7 @@ export class RunnerState {
 
       case "create_project": {
         const input = createProjectInputSchema.parse(payload);
-        await this.ensureApprovalIfNeeded(toolName, actorEmail, payload, bypassPolicy, grantKey);
+        await this.ensureApprovalIfNeeded(toolName, actorEmail, actorSubject, payload, bypassPolicy, grantKey);
         const targetPath = resolveProjectPath(config, input.name);
         fs.mkdirSync(targetPath, { recursive: false });
         this.logActivity("status", `Project created at ${targetPath}`, { path: targetPath });
@@ -794,7 +847,7 @@ export class RunnerState {
         const input = writeFileInputSchema.parse(payload);
         if (!bypassPolicy) {
           assertPathCapability(config, input.path, "write");
-          await this.ensureApprovalIfNeeded(toolName, actorEmail, payload, bypassPolicy, grantKey);
+          await this.ensureApprovalIfNeeded(toolName, actorEmail, actorSubject, payload, bypassPolicy, grantKey);
         }
         fs.mkdirSync(path.dirname(input.path), { recursive: true });
         fs.writeFileSync(input.path, input.content, "utf8");
@@ -806,7 +859,7 @@ export class RunnerState {
         const input = runRepoTaskInputSchema.parse(payload);
         if (!bypassPolicy) {
           assertPathCapability(config, input.projectPath, "execute-tasks");
-          await this.ensureApprovalIfNeeded(toolName, actorEmail, payload, bypassPolicy, grantKey);
+          await this.ensureApprovalIfNeeded(toolName, actorEmail, actorSubject, payload, bypassPolicy, grantKey);
         }
         const task = findAllowedTask(config.tasks, input.taskId);
         const limits = getExecutionLimits(task);
@@ -823,7 +876,7 @@ export class RunnerState {
         const input = startDevServerInputSchema.parse(payload);
         if (!bypassPolicy) {
           assertPathCapability(config, input.projectPath, "execute-tasks");
-          await this.ensureApprovalIfNeeded(toolName, actorEmail, payload, bypassPolicy, grantKey);
+          await this.ensureApprovalIfNeeded(toolName, actorEmail, actorSubject, payload, bypassPolicy, grantKey);
         }
         const task = findAllowedTask(config.devServerTasks, input.taskId);
         const started = this.processManager.startManaged(task.command, input.projectPath, input.taskId);
@@ -833,7 +886,7 @@ export class RunnerState {
       case "stop_dev_server": {
         const input = stopDevServerInputSchema.parse(payload);
         if (!bypassPolicy) {
-          await this.ensureApprovalIfNeeded(toolName, actorEmail, payload, bypassPolicy, grantKey);
+          await this.ensureApprovalIfNeeded(toolName, actorEmail, actorSubject, payload, bypassPolicy, grantKey);
         }
         const stopped = this.processManager.stopManaged(input.processId);
         return { processId: input.processId, stopped };
@@ -851,7 +904,7 @@ export class RunnerState {
           const rule = findAllowedCommandRule(config, input.workingDirectory, input.command);
           approvedViaRule = rule.ruleId;
           if (rule.approvalRequired) {
-            await this.ensureApprovalIfNeeded(toolName, actorEmail, payload, bypassPolicy, grantKey);
+            await this.ensureApprovalIfNeeded(toolName, actorEmail, actorSubject, payload, bypassPolicy, grantKey);
           }
         }
         const result = await this.processManager.runOnce(input.command, input.workingDirectory, {
@@ -943,6 +996,7 @@ export class RunnerState {
   private async ensureApprovalIfNeeded(
     toolName: ToolName,
     actorEmail: string,
+    actorSubject: string,
     payload: unknown,
     bypassPolicy: boolean,
     grantKey: string,
@@ -954,12 +1008,20 @@ export class RunnerState {
     if (!requiresApproval(config, toolName)) {
       return;
     }
-    await this.requestApprovalAndWait(toolName, actorEmail, payload, grantKey, `Approval required for ${toolName}`);
+    await this.requestApprovalAndWait(
+      toolName,
+      actorEmail,
+      actorSubject,
+      payload,
+      grantKey,
+      `Approval required for ${toolName}`,
+    );
   }
 
   private createOrReuseApproval(
     toolName: ToolName,
     actorEmail: string,
+    actorSubject: string,
     payload: unknown,
     grantKey: string,
     summary: string,
@@ -982,9 +1044,21 @@ export class RunnerState {
       status: "pending",
     }) as PendingApproval;
     approval.grantKey = grantKey;
+    approval.plutoVoiceSessionId = extractPlutoVoiceSessionId(actorSubject);
     approval.rememberTarget = rememberTarget;
     this.pendingApprovals.set(approval.id, approval);
     this.logActivity("approval", summary, { approvalId: approval.id, toolName, actorEmail }, "warn");
+    if (approval.plutoVoiceSessionId) {
+      this.emitPlutoVoiceEvent({
+        sessionId: approval.plutoVoiceSessionId,
+        event: {
+          type: "approval_requested",
+          approvalId: approval.id,
+          toolName,
+          summary,
+        },
+      });
+    }
     this.emitStatus();
     this.events.emit("approval", this.listApprovals());
     return approval;
@@ -993,6 +1067,7 @@ export class RunnerState {
   private async requestApprovalAndWait(
     toolName: ToolName,
     actorEmail: string,
+    actorSubject: string,
     payload: unknown,
     grantKey: string,
     summary: string,
@@ -1002,6 +1077,7 @@ export class RunnerState {
     const approval = this.createOrReuseApproval(
       toolName,
       actorEmail,
+      actorSubject,
       payload,
       grantKey,
       summary,
@@ -1049,6 +1125,7 @@ export class RunnerState {
           await this.requestApprovalAndWait(
             request.toolName,
             request.actor.email,
+            request.actor.subject,
             request.payload,
             grantKey,
             `${request.toolName} needs ${capability} access to ${requestPath}`,
@@ -1068,6 +1145,7 @@ export class RunnerState {
           await this.requestApprovalAndWait(
             "run_command",
             request.actor.email,
+            request.actor.subject,
             request.payload,
             grantKey,
             `run_command needs approval for ${parsed.data.command.join(" ")}`,
@@ -1084,6 +1162,7 @@ export class RunnerState {
         await this.requestApprovalAndWait(
           request.toolName,
           request.actor.email,
+          request.actor.subject,
           request.payload,
           grantKey,
           `Approval required for ${request.toolName}`,
@@ -1100,6 +1179,13 @@ export class RunnerState {
 
 function createGrantKey(toolName: ToolName, payload: unknown) {
   return stableSerialize({ toolName, payload });
+}
+
+function extractPlutoVoiceSessionId(actorSubject: string) {
+  const prefix = "pluto-voice-session:";
+  return actorSubject.startsWith(prefix)
+    ? actorSubject.slice(prefix.length) || null
+    : null;
 }
 
 function stableSerialize(value: unknown): string {

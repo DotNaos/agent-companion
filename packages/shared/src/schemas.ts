@@ -196,6 +196,7 @@ export const plutoVoiceSessionStreamEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("input_transcription"),
+    turnId: z.number().int().positive(),
     text: z.string().min(1),
   }),
   z.object({
@@ -212,6 +213,31 @@ export const plutoVoiceSessionStreamEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("output_turn_complete"),
     turnId: z.number().int().positive(),
+  }),
+  z.object({
+    type: z.literal("tool_call"),
+    toolName: toolNameSchema,
+    summary: z.string().min(1),
+    toolCallId: z.string().min(1).nullable().default(null),
+  }),
+  z.object({
+    type: z.literal("tool_result"),
+    toolName: toolNameSchema,
+    summary: z.string().min(1),
+    ok: z.boolean(),
+    toolCallId: z.string().min(1).nullable().default(null),
+  }),
+  z.object({
+    type: z.literal("approval_requested"),
+    approvalId: z.string().min(1),
+    toolName: toolNameSchema,
+    summary: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("approval_resolved"),
+    approvalId: z.string().min(1),
+    toolName: toolNameSchema,
+    decision: z.enum(["approved", "denied"]),
   }),
   z.object({
     type: z.literal("status"),

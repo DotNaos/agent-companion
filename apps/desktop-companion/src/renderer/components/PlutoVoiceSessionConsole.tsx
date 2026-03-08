@@ -34,7 +34,7 @@ export function PlutoVoiceSessionConsole(props: PlutoVoiceSessionConsoleProps) {
         activeStatusMessage,
         audioDevices,
         canRequestSpeaker,
-        expandedTimelineEndRef,
+        expandedScrollAreaRef,
         inlineNotice,
         inputPlaceholder,
         isChatExpanded,
@@ -45,7 +45,7 @@ export function PlutoVoiceSessionConsole(props: PlutoVoiceSessionConsoleProps) {
         isTakingMic,
         liveMicFeedback,
         micLevel,
-        panelTimelineEndRef,
+        panelScrollAreaRef,
         primaryAction,
         recordingHint,
         recordingMode,
@@ -130,9 +130,10 @@ export function PlutoVoiceSessionConsole(props: PlutoVoiceSessionConsoleProps) {
                 onSelectOutput={audioDevices.setSelectedOutputId}
             />
 
-            <ScrollArea className="mt-4 h-56 rounded-2xl border border-white/10 bg-black/30 p-3">
+            <ScrollArea
+                ref={panelScrollAreaRef}
+                className="mt-4 h-56 rounded-2xl border border-white/10 bg-black/30 p-3">
                 {renderVoiceTimeline(visibleTimeline, false)}
-                <div ref={panelTimelineEndRef} aria-hidden="true" />
             </ScrollArea>
 
             <Dialog open={isChatExpanded} onOpenChange={setIsChatExpanded}>
@@ -159,12 +160,10 @@ export function PlutoVoiceSessionConsole(props: PlutoVoiceSessionConsoleProps) {
                                     {activeStatusMessage}
                                 </div>
                             ) : null}
-                            <ScrollArea className="min-h-0 flex-1 rounded-2xl border border-white/10 bg-black/25 p-4">
+                            <ScrollArea
+                                ref={expandedScrollAreaRef}
+                                className="min-h-0 flex-1 rounded-2xl border border-white/10 bg-black/25 p-4">
                                 {renderVoiceTimeline(timeline, false)}
-                                <div
-                                    ref={expandedTimelineEndRef}
-                                    aria-hidden="true"
-                                />
                             </ScrollArea>
                         </div>
                         <VoiceChatComposer

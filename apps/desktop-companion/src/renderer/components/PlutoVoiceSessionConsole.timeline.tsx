@@ -174,6 +174,10 @@ export function shouldMergeVoiceTimelineEntry(
         return false;
     }
 
+    if (previous.turnId !== undefined && next.turnId !== undefined) {
+        return true;
+    }
+
     const previousText = previous.text.trim();
     const nextText = next.text.trim();
 

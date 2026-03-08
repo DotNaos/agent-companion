@@ -3,3 +3,4 @@ export * from "./errors.js";
 export * from "./fs-store.js";
 export * from "./policy.js";
 export * from "./schemas.js";
+export * from "./tools.js";

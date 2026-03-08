@@ -9,13 +9,19 @@ import {
     type PlutoDelivery,
     type PlutoMessage,
     type PlutoTone,
+	type ToolName,
     type PlutoVoiceSessionAudioChunk,
     type PlutoVoiceSessionStreamEvent,
 } from "@agent-companion/shared";
 import {
+    ActivityHandling,
+    EndSensitivity,
     GoogleGenAI,
     MediaResolution,
     Modality,
+    StartSensitivity,
+    TurnCoverage,
+    type FunctionCall,
     type GenerateContentResponse,
     type LiveServerMessage,
     type PartUnion,
@@ -24,6 +30,11 @@ import fs from "node:fs";
 import path from "node:path";
 import type { RunnerEnv } from "./env.js";
 import { logger } from "./logger.js";
+import {
+    buildPlutoToolDeclarations,
+    executePlutoFunctionCalls,
+    type PlutoToolExecutor,
+} from "./pluto-tools.js";
 
 interface InlineImageInput {
 	data: string;
@@ -54,10 +65,21 @@ interface PlutoVoiceSessionRegistration {
 	emit: (event: PlutoVoiceSessionStreamEvent) => void;
 }
 
+const PLUTO_LIVE_SYSTEM_INSTRUCTION = [
+	"You are Pluto, a friendly German-speaking desktop sidekick and secretary for the user.",
+	"Speak naturally, briefly, and helpfully in German unless the user explicitly asks for another language.",
+	"You may use tools whenever they help you inspect files, run approved tasks, or answer the user's request accurately.",
+	"When a tool returns an error envelope, explain the problem in plain language and suggest the next sensible step.",
+	"Do not read secrets aloud unless the user explicitly asks for that exact sensitive content.",
+].join(" ");
+
 class PlutoVoiceSessionRuntime {
 	private session: LiveSessionConnection | null = null;
 	private connecting: Promise<LiveSessionConnection> | null = null;
 	private closing = false;
+	private toolCallQueue = Promise.resolve();
+	private nextInputTurnId = 1;
+	private activeInputTurnId: number | null = null;
 	private nextOutputTurnId = 1;
 	private activeOutputTurnId: number | null = null;
 
@@ -66,6 +88,7 @@ class PlutoVoiceSessionRuntime {
 		private readonly env: RunnerEnv,
 		private readonly sessionId: string,
 		private readonly emit: (event: PlutoVoiceSessionStreamEvent) => void,
+		private readonly executeTool: PlutoToolExecutor | null,
 	) {}
 
 	async sendAudioChunk(chunk: PlutoVoiceSessionAudioChunk) {
@@ -146,9 +169,27 @@ class PlutoVoiceSessionRuntime {
 			},
 			config: {
 				responseModalities: [Modality.AUDIO],
+				systemInstruction: PLUTO_LIVE_SYSTEM_INSTRUCTION,
 				inputAudioTranscription: {},
 				outputAudioTranscription: {},
+				tools: this.executeTool
+					? [{ functionDeclarations: buildPlutoToolDeclarations() }]
+					: undefined,
+				realtimeInputConfig: {
+					activityHandling:
+						ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+					automaticActivityDetection: {
+						startOfSpeechSensitivity:
+							StartSensitivity.START_SENSITIVITY_HIGH,
+						endOfSpeechSensitivity:
+							EndSensitivity.END_SENSITIVITY_LOW,
+						prefixPaddingMs: 120,
+						silenceDurationMs: 700,
+					},
+					turnCoverage: TurnCoverage.TURN_INCLUDES_ALL_INPUT,
+				},
 				speechConfig: {
+					languageCode: "de-DE",
 					voiceConfig: {
 						prebuiltVoiceConfig: {
 							voiceName: this.env.PLUTO_VOICE_NAME || "Achird",
@@ -172,11 +213,32 @@ class PlutoVoiceSessionRuntime {
 	}
 
 	private handleMessage(message: LiveServerMessage) {
+		const functionCalls = message.toolCall?.functionCalls ?? [];
+		if (functionCalls.length > 0) {
+			this.toolCallQueue = this.toolCallQueue
+				.then(() => this.handleToolCalls(functionCalls))
+				.catch((error) => {
+					this.emitEvent({
+						type: "error",
+						code: "PLUTO_TOOL_CALL_FAILED",
+						message:
+							error instanceof Error
+								? error.message
+								: "Pluto tool execution failed",
+					});
+				});
+		}
+
 		const content = message.serverContent;
 		const inputTranscription = content?.inputTranscription?.text?.trim();
 		if (inputTranscription) {
+			if (this.activeInputTurnId === null) {
+				this.activeInputTurnId = this.nextInputTurnId;
+				this.nextInputTurnId += 1;
+			}
 			this.emitEvent({
 				type: "input_transcription",
+				turnId: this.activeInputTurnId,
 				text: inputTranscription,
 			});
 		}
@@ -212,6 +274,7 @@ class PlutoVoiceSessionRuntime {
 		}
 
 		if (content?.interrupted) {
+			this.activeInputTurnId = null;
 			this.activeOutputTurnId = null;
 			this.emitEvent({
 				type: "status",
@@ -236,6 +299,7 @@ class PlutoVoiceSessionRuntime {
 		}
 
 		if (content?.turnComplete) {
+			this.activeInputTurnId = null;
 			if (outputTurnId !== null) {
 				this.emitEvent({
 					type: "output_turn_complete",
@@ -253,16 +317,124 @@ class PlutoVoiceSessionRuntime {
 	private emitEvent(event: PlutoVoiceSessionStreamEvent) {
 		this.emit(plutoVoiceSessionStreamEventSchema.parse(event));
 	}
+
+	private async handleToolCalls(functionCalls: FunctionCall[]) {
+		if (!this.executeTool) {
+			throw new Error("Pluto tool executor is not configured");
+		}
+
+		const session = this.session;
+		if (!session) {
+			throw new Error("Pluto live session is not connected");
+		}
+
+		for (const functionCall of functionCalls) {
+			const toolName = functionCall.name as ToolName | undefined;
+			if (!toolName) {
+				continue;
+			}
+			this.emitEvent({
+				type: "tool_call",
+				toolName,
+				summary: summarizeToolCall(functionCall),
+				toolCallId: functionCall.id ?? null,
+			});
+		}
+
+		const { responses, executions } = await executePlutoFunctionCalls(
+			functionCalls,
+			(toolName, payload, context) =>
+				this.executeTool?.(toolName, payload, {
+					sessionId: this.sessionId,
+					toolCallId: context?.toolCallId ?? null,
+				}) ??
+				Promise.resolve({
+					ok: false,
+					error: {
+						code: "PLUTO_TOOL_EXECUTOR_MISSING",
+						message: "Pluto tool executor is not configured",
+					},
+				}),
+		);
+
+		for (const execution of executions) {
+			const toolName = execution.functionCall.name as ToolName | undefined;
+			if (!toolName) {
+				continue;
+			}
+			this.emitEvent({
+				type: "tool_result",
+				toolName,
+				summary: summarizeToolResult(toolName, execution.result),
+				ok: execution.result.ok,
+				toolCallId: execution.functionCall.id ?? null,
+			});
+		}
+
+		session.sendToolResponse({
+			functionResponses: responses,
+		});
+	}
+}
+
+function summarizeToolCall(functionCall: FunctionCall) {
+	const toolName = functionCall.name ?? "unknown_tool";
+	const rawArgs = JSON.stringify(functionCall.args ?? {});
+	const preview = rawArgs.length > 220 ? `${rawArgs.slice(0, 217)}…` : rawArgs;
+	return `${toolName}(${preview === "{}" ? "" : preview})`;
+}
+
+function summarizeToolResult(
+	toolName: ToolName,
+	result: {
+		ok: boolean;
+		data?: unknown;
+		error?: { code: string; message: string };
+	},
+) {
+	if (!result.ok) {
+		const errorCode = result.error?.code ?? "TOOL_EXECUTION_FAILED";
+		const message = result.error?.message ?? `${toolName} failed.`;
+		return `${toolName} failed (${errorCode}): ${message}`;
+	}
+
+	if (toolName === "run_command" || toolName === "run_repo_task") {
+		const output = result.data as {
+			exitCode?: number;
+			stdout?: string;
+			stderr?: string;
+		};
+		const detail = (output.stderr || output.stdout || "").trim();
+		const snippet =
+			detail.length > 180 ? `${detail.slice(0, 177)}…` : detail;
+		return snippet
+			? `${toolName} exited with ${output.exitCode ?? 0}: ${snippet}`
+			: `${toolName} exited with ${output.exitCode ?? 0}.`;
+	}
+
+	if (toolName === "list_directory") {
+		const entries = (result.data as { entries?: unknown[] })?.entries ?? [];
+		return `${toolName} returned ${entries.length} entries.`;
+	}
+
+	if (toolName === "read_file") {
+		const payload = result.data as { path?: string; truncated?: boolean };
+		return `${toolName} read ${payload.path ?? "the requested file"}${payload.truncated ? " (truncated)" : ""}.`;
+	}
+
+	return `${toolName} completed successfully.`;
 }
 
 export class PlutoService {
 	private readonly ai: GoogleGenAI | null;
+	private readonly executeTool: PlutoToolExecutor | null;
 	private readonly recentMessages: string[] = [];
 	private readonly voiceSessionRegistrations = new Map<string, PlutoVoiceSessionRegistration>();
 	private readonly voiceSessionRuntimes = new Map<string, PlutoVoiceSessionRuntime>();
 
-	constructor(private readonly env: RunnerEnv) {
+	constructor(private readonly env: RunnerEnv, executeTool: PlutoToolExecutor | null = null) {
 		this.ai = env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: env.GEMINI_API_KEY }) : null;
+		this.executeTool = executeTool;
 		fs.mkdirSync(env.PLUTO_AUDIO_DIR, { recursive: true });
 	}
 
@@ -667,6 +839,7 @@ Do not repeat these phrases or sentiments. Keep your commentary fresh and divers
 				outputAudioTranscription: includeAudio ? {} : undefined,
 				speechConfig: includeAudio
 					? {
+							languageCode: "de-DE",
 							voiceConfig: {
 								prebuiltVoiceConfig: {
 									voiceName: this.env.PLUTO_VOICE_NAME || "Achird",
@@ -715,7 +888,13 @@ Do not repeat these phrases or sentiments. Keep your commentary fresh and divers
 			throw new Error(`Pluto voice session ${sessionId} is not registered`);
 		}
 
-		const runtime = new PlutoVoiceSessionRuntime(this.ai, this.env, sessionId, registration.emit);
+		const runtime = new PlutoVoiceSessionRuntime(
+			this.ai,
+			this.env,
+			sessionId,
+			registration.emit,
+			this.executeTool,
+		);
 		this.voiceSessionRuntimes.set(sessionId, runtime);
 		logger.info({ sessionId }, "pluto_voice_session_runtime_created");
 		return runtime;

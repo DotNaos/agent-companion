@@ -25,6 +25,20 @@ describe('plutoVoiceSessionStreamClientMessageSchema', () => {
 });
 
 describe('plutoVoiceSessionStreamEventSchema', () => {
+    it('parses input transcription events with turn ids', () => {
+        expect(
+            plutoVoiceSessionStreamEventSchema.parse({
+                type: 'input_transcription',
+                turnId: 2,
+                text: 'Hallo Pluto',
+            }),
+        ).toEqual({
+            type: 'input_transcription',
+            turnId: 2,
+            text: 'Hallo Pluto',
+        });
+    });
+
     it('parses output audio events with turn ids', () => {
         expect(
             plutoVoiceSessionStreamEventSchema.parse({

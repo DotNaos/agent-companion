@@ -14,9 +14,11 @@ type PlaybackHookOptions = Readonly<{
 }>;
 
 type PendingAudioChunk = {
-    audioBase64: string;
+    bytes: Uint8Array;
     mimeType: string;
 };
+
+const MAX_PCM_BATCH_DURATION_SECONDS = 0.18;
 
 export function usePlutoVoicePlayback({
     selectedOutputId,
@@ -92,7 +94,14 @@ export function usePlutoVoicePlayback({
         mimeType: string,
     ) {
         const queue = pendingPlaybackTurnsRef.current.get(turnId) ?? [];
-        queue.push({ audioBase64, mimeType });
+        const bytes = decodeBase64(audioBase64);
+
+        if (mimeType.startsWith('audio/pcm')) {
+            appendPcmChunk(queue, bytes, mimeType);
+        } else {
+            queue.push({ bytes, mimeType });
+        }
+
         pendingPlaybackTurnsRef.current.set(turnId, queue);
         maybeAdvancePlaybackTurn();
     }
@@ -121,7 +130,7 @@ export function usePlutoVoicePlayback({
                     pendingPlaybackTurnsRef.current.delete(currentTurnId);
                 }
                 void playIncomingAudioChunk(
-                    nextChunk.audioBase64,
+                    nextChunk.bytes,
                     nextChunk.mimeType,
                 );
                 return;
@@ -162,18 +171,18 @@ export function usePlutoVoicePlayback({
         }
 
         currentPlaybackTurnIdRef.current = nextTurnId;
-        void playIncomingAudioChunk(nextChunk.audioBase64, nextChunk.mimeType);
+        void playIncomingAudioChunk(nextChunk.bytes, nextChunk.mimeType);
     }
 
-    async function playIncomingAudioChunk(base64: string, mimeType: string) {
+    async function playIncomingAudioChunk(bytes: Uint8Array, mimeType: string) {
         if (mimeType.startsWith('audio/pcm')) {
-            await playPcmChunk(base64, mimeType);
+            await playPcmChunk(bytes, mimeType);
             return;
         }
-        await playBlobChunk(base64, mimeType);
+        await playBlobChunk(bytes, mimeType);
     }
 
-    async function playPcmChunk(base64: string, mimeType: string) {
+    async function playPcmChunk(bytes: Uint8Array, mimeType: string) {
         const ctx = await ensureAudioContext();
         if (!ctx) {
             return;
@@ -187,7 +196,6 @@ export function usePlutoVoicePlayback({
         );
 
         const sampleRate = parseSampleRate(mimeType, 24_000);
-        const bytes = decodeBase64(base64);
         const frameCount = Math.floor(bytes.length / 2);
         const samples = new Float32Array(frameCount);
         const view = new DataView(
@@ -207,21 +215,40 @@ export function usePlutoVoicePlayback({
         buffer.copyToChannel(samples, 0);
 
         const source = ctx.createBufferSource();
+        const gainNode = ctx.createGain();
         source.buffer = buffer;
-        source.connect(ctx.destination);
+        source.connect(gainNode);
+        gainNode.connect(ctx.destination);
         pcmSourcesRef.current.add(source);
 
+        const crossfadeDuration = Math.min(0.008, buffer.duration / 4);
         const startAt = Math.max(
             ctx.currentTime,
-            scheduledPlaybackTimeRef.current,
+            scheduledPlaybackTimeRef.current - crossfadeDuration,
         );
         scheduledPlaybackTimeRef.current = startAt + buffer.duration;
         activePlaybackCountRef.current += 1;
         setIsPlaying(true);
         setPlutoSpeakingState(true, Math.min(1, amplitudeSum / frameCount));
 
+        gainNode.gain.setValueAtTime(0, startAt);
+        gainNode.gain.linearRampToValueAtTime(
+            1,
+            startAt + crossfadeDuration,
+        );
+        gainNode.gain.setValueAtTime(
+            1,
+            Math.max(startAt + crossfadeDuration, startAt),
+        );
+        gainNode.gain.linearRampToValueAtTime(
+            0,
+            startAt + buffer.duration,
+        );
+
         source.addEventListener('ended', () => {
             pcmSourcesRef.current.delete(source);
+            source.disconnect();
+            gainNode.disconnect();
             activePlaybackCountRef.current = Math.max(
                 0,
                 activePlaybackCountRef.current - 1,
@@ -236,9 +263,10 @@ export function usePlutoVoicePlayback({
         source.start(startAt);
     }
 
-    async function playBlobChunk(base64: string, mimeType: string) {
-        const bytes = decodeBase64(base64);
-        const blob = new Blob([bytes], { type: mimeType });
+    async function playBlobChunk(bytes: Uint8Array, mimeType: string) {
+        const blobBytes = new Uint8Array(bytes.byteLength);
+        blobBytes.set(bytes);
+        const blob = new Blob([blobBytes.buffer], { type: mimeType });
         const objectUrl = URL.createObjectURL(blob);
         fallbackAudioRef.current?.pause();
         const audio = new Audio(objectUrl);
@@ -313,6 +341,37 @@ export async function blobToBase64(blob: Blob) {
         binary += String.fromCodePoint(byte);
     }
     return globalThis.btoa(binary);
+}
+
+function appendPcmChunk(
+    queue: PendingAudioChunk[],
+    nextBytes: Uint8Array,
+    mimeType: string,
+) {
+    const sampleRate = parseSampleRate(mimeType, 24_000);
+    const maxBatchBytes = Math.max(
+        nextBytes.byteLength,
+        Math.floor(sampleRate * 2 * MAX_PCM_BATCH_DURATION_SECONDS),
+    );
+    const previous = queue.at(-1);
+
+    if (
+        previous &&
+        previous.mimeType === mimeType &&
+        previous.bytes.byteLength < maxBatchBytes
+    ) {
+        previous.bytes = concatUint8Arrays(previous.bytes, nextBytes);
+        return;
+    }
+
+    queue.push({ bytes: nextBytes, mimeType });
+}
+
+function concatUint8Arrays(left: Uint8Array, right: Uint8Array) {
+    const merged = new Uint8Array(left.byteLength + right.byteLength);
+    merged.set(left, 0);
+    merged.set(right, left.byteLength);
+    return merged;
 }
 
 function decodeBase64(base64: string) {

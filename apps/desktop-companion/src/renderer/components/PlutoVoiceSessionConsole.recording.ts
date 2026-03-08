@@ -6,6 +6,18 @@ import type {
     VoiceTimelineEntry,
 } from './PlutoVoiceSessionConsole.shared.js';
 
+const PLUTO_AUDIO_CAPTURE_WORKLET_NAME = 'pluto-audio-capture';
+const PLUTO_AUDIO_CAPTURE_WORKLET_URL = new URL(
+    './PlutoVoiceSessionConsole.capture.worklet.ts',
+    import.meta.url,
+).href;
+const PLUTO_AUDIO_CAPTURE_CHUNK_FRAMES = 2048;
+
+type AudioCaptureGraph = {
+    dispose: () => void;
+    flush?: () => Promise<void>;
+};
+
 export async function sendPlutoAudioChunk({
     chunk,
     currentClientId,
@@ -138,54 +150,33 @@ export async function togglePlutoRecording({
         }
 
         const source = audioContext.createMediaStreamSource(stream);
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
         const mimeType = getPlutoPcmMimeType(audioContext.sampleRate);
-        let stopped = false;
+        const captureGraph = await createAudioCaptureGraph({
+            audioContext,
+            currentClientId: clientId,
+            mimeType,
+            sendAudioChunk,
+            source,
+        });
+        let stopping = false;
 
         const stopCapture = () => {
-            if (stopped) {
+            if (stopping) {
                 return;
             }
 
-            stopped = true;
-            processor.onaudioprocess = null;
-            processor.disconnect();
-            source.disconnect();
-            audioCaptureRef.current = null;
-            setIsRecording(false);
-            setRecordingMode(null);
-            stopMediaStream();
-            void audioContext.close().catch(() => undefined);
-
-            if (socketRef.current?.readyState === WebSocket.OPEN) {
-                socketRef.current.send(
-                    JSON.stringify({
-                        type: 'audio_stream_end',
-                        clientId,
-                    }),
-                );
-            }
+            stopping = true;
+            void finalizeCapture({
+                audioCaptureRef,
+                audioContext,
+                captureGraph,
+                clientId,
+                setIsRecording,
+                setRecordingMode,
+                socketRef,
+                stopMediaStream,
+            });
         };
-
-        processor.onaudioprocess = (event) => {
-            if (stopped || !clientId) {
-                return;
-            }
-
-            const input = event.inputBuffer.getChannelData(0);
-            if (input.length === 0) {
-                return;
-            }
-
-            const chunk = createPcmChunkBlob(
-                new Float32Array(input),
-                audioContext.sampleRate,
-            );
-            void sendAudioChunk(clientId, chunk, mimeType);
-        };
-
-        source.connect(processor);
-        processor.connect(audioContext.destination);
         audioCaptureRef.current = { stop: stopCapture };
 
         setIsRecording(true);
@@ -235,4 +226,214 @@ export function stopPlutoRecording(
                 : 'Recording stopped. Sending to Pluto…',
         tone: 'neutral',
     });
+}
+
+async function finalizeCapture({
+    audioCaptureRef,
+    audioContext,
+    captureGraph,
+    clientId,
+    setIsRecording,
+    setRecordingMode,
+    socketRef,
+    stopMediaStream,
+}: Readonly<{
+    audioCaptureRef: { current: PlutoAudioCapture | null };
+    audioContext: AudioContext;
+    captureGraph: AudioCaptureGraph;
+    clientId: string;
+    setIsRecording: Dispatch<SetStateAction<boolean>>;
+    setRecordingMode: Dispatch<SetStateAction<RecordingMode | null>>;
+    socketRef: { current: WebSocket | null };
+    stopMediaStream: () => void;
+}>) {
+    await captureGraph.flush?.().catch(() => undefined);
+    captureGraph.dispose();
+    audioCaptureRef.current = null;
+    setIsRecording(false);
+    setRecordingMode(null);
+    stopMediaStream();
+    await audioContext.close().catch(() => undefined);
+
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+            JSON.stringify({
+                type: 'audio_stream_end',
+                clientId,
+            }),
+        );
+    }
+}
+
+async function createAudioCaptureGraph({
+    audioContext,
+    currentClientId,
+    mimeType,
+    sendAudioChunk,
+    source,
+}: Readonly<{
+    audioContext: AudioContext;
+    currentClientId: string;
+    mimeType: string;
+    sendAudioChunk: (
+        currentClientId: string,
+        chunk: Blob,
+        fallbackMimeType: string,
+    ) => Promise<void>;
+    source: MediaStreamAudioSourceNode;
+}>): Promise<AudioCaptureGraph> {
+    if (canUseAudioWorklet(audioContext)) {
+        try {
+            await audioContext.audioWorklet.addModule(
+                PLUTO_AUDIO_CAPTURE_WORKLET_URL,
+            );
+            return createAudioWorkletCaptureGraph({
+                audioContext,
+                currentClientId,
+                mimeType,
+                sendAudioChunk,
+                source,
+            });
+        } catch {
+            // Fall back to ScriptProcessorNode when AudioWorklet isn't usable.
+        }
+    }
+
+    return createScriptProcessorCaptureGraph({
+        audioContext,
+        currentClientId,
+        mimeType,
+        sendAudioChunk,
+        source,
+    });
+}
+
+function canUseAudioWorklet(audioContext: AudioContext) {
+    return (
+        typeof AudioWorkletNode === 'function' &&
+        typeof audioContext.audioWorklet?.addModule === 'function'
+    );
+}
+
+function createAudioWorkletCaptureGraph({
+    audioContext,
+    currentClientId,
+    mimeType,
+    sendAudioChunk,
+    source,
+}: Readonly<{
+    audioContext: AudioContext;
+    currentClientId: string;
+    mimeType: string;
+    sendAudioChunk: (
+        currentClientId: string,
+        chunk: Blob,
+        fallbackMimeType: string,
+    ) => Promise<void>;
+    source: MediaStreamAudioSourceNode;
+}>): AudioCaptureGraph {
+    const workletNode = new AudioWorkletNode(
+        audioContext,
+        PLUTO_AUDIO_CAPTURE_WORKLET_NAME,
+        {
+            channelCount: 1,
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            outputChannelCount: [1],
+            processorOptions: {
+                chunkFrames: PLUTO_AUDIO_CAPTURE_CHUNK_FRAMES,
+            },
+        },
+    );
+    const silenceGain = audioContext.createGain();
+    silenceGain.gain.value = 0;
+
+    const flushWaiters = new Set<() => void>();
+    workletNode.port.onmessage = (event) => {
+        if (event.data instanceof Float32Array) {
+            const chunk = createPcmChunkBlob(event.data, audioContext.sampleRate);
+            void sendAudioChunk(currentClientId, chunk, mimeType);
+            return;
+        }
+
+        if (event.data?.type === 'flush-complete') {
+            for (const resolve of flushWaiters) {
+                resolve();
+            }
+            flushWaiters.clear();
+        }
+    };
+
+    source.connect(workletNode);
+    workletNode.connect(silenceGain);
+    silenceGain.connect(audioContext.destination);
+
+    return {
+        dispose: () => {
+            workletNode.port.onmessage = null;
+            source.disconnect();
+            workletNode.disconnect();
+            silenceGain.disconnect();
+        },
+        flush: () =>
+            new Promise((resolve) => {
+                const timeout = globalThis.setTimeout(() => {
+                    flushWaiters.delete(done);
+                    resolve();
+                }, 200);
+
+                const done = () => {
+                    globalThis.clearTimeout(timeout);
+                    flushWaiters.delete(done);
+                    resolve();
+                };
+
+                flushWaiters.add(done);
+                workletNode.port.postMessage({ type: 'flush' });
+            }),
+    };
+}
+
+function createScriptProcessorCaptureGraph({
+    audioContext,
+    currentClientId,
+    mimeType,
+    sendAudioChunk,
+    source,
+}: Readonly<{
+    audioContext: AudioContext;
+    currentClientId: string;
+    mimeType: string;
+    sendAudioChunk: (
+        currentClientId: string,
+        chunk: Blob,
+        fallbackMimeType: string,
+    ) => Promise<void>;
+    source: MediaStreamAudioSourceNode;
+}>): AudioCaptureGraph {
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+    processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        if (input.length === 0) {
+            return;
+        }
+
+        const chunk = createPcmChunkBlob(
+            new Float32Array(input),
+            audioContext.sampleRate,
+        );
+        void sendAudioChunk(currentClientId, chunk, mimeType);
+    };
+
+    source.connect(processor);
+    processor.connect(audioContext.destination);
+
+    return {
+        dispose: () => {
+            processor.onaudioprocess = null;
+            source.disconnect();
+            processor.disconnect();
+        },
+    };
 }

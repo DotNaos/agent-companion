@@ -191,6 +191,37 @@ describe('voice transcript streaming', () => {
         );
     });
 
+    it('merges same-turn Pluto chunks even after a longer pause', () => {
+        const started = appendVoiceTimelineEntry(
+            [],
+            {
+                actor: 'pluto',
+                label: 'Pluto',
+                text: 'Alles gut hier, danke! Gibt es etwas, über das du sprechen möchtest, oder suchst du einfach nur ein bisschen',
+                tone: 'neutral',
+                turnId: 11,
+            },
+            '2026-03-08T18:26:35.000Z',
+        );
+
+        const updated = appendVoiceTimelineEntry(
+            started,
+            {
+                actor: 'pluto',
+                label: 'Pluto',
+                text: 'Gesellschaft?',
+                tone: 'neutral',
+                turnId: 11,
+            },
+            '2026-03-08T18:26:38.000Z',
+        );
+
+        expect(updated).toHaveLength(1);
+        expect(updated[0]?.text).toBe(
+            'Alles gut hier, danke! Gibt es etwas, über das du sprechen möchtest, oder suchst du einfach nur ein bisschen Gesellschaft?',
+        );
+    });
+
     it('keeps Pluto chunks from different turns in separate bubbles', () => {
         const started = appendVoiceTimelineEntry(
             [],
@@ -219,6 +250,65 @@ describe('voice transcript streaming', () => {
         expect(updated).toHaveLength(2);
         expect(updated[0]?.text).toBe('Erste Antwort.');
         expect(updated[1]?.text).toBe('Zweite Antwort.');
+    });
+
+    it('merges streamed user transcription chunks from the same turn', () => {
+        const started = appendVoiceTimelineEntry(
+            [],
+            {
+                actor: 'you',
+                label: 'You',
+                text: 'Ich brauche',
+                tone: 'accent',
+                turnId: 7,
+            },
+            '2026-03-08T18:23:52.000Z',
+        );
+
+        const updated = appendVoiceTimelineEntry(
+            started,
+            {
+                actor: 'you',
+                label: 'You',
+                text: 'Hilfe beim Planen.',
+                tone: 'accent',
+                turnId: 7,
+            },
+            '2026-03-08T18:23:53.000Z',
+        );
+
+        expect(updated).toHaveLength(1);
+        expect(updated[0]?.text).toBe('Ich brauche Hilfe beim Planen.');
+    });
+
+    it('keeps consecutive user turns separate when their turn ids differ', () => {
+        const started = appendVoiceTimelineEntry(
+            [],
+            {
+                actor: 'you',
+                label: 'You',
+                text: 'Erste Frage.',
+                tone: 'accent',
+                turnId: 8,
+            },
+            '2026-03-08T18:23:52.000Z',
+        );
+
+        const updated = appendVoiceTimelineEntry(
+            started,
+            {
+                actor: 'you',
+                label: 'You',
+                text: 'Zweite Frage.',
+                tone: 'accent',
+                turnId: 9,
+            },
+            '2026-03-08T18:23:52.400Z',
+        );
+
+        expect(updated).toHaveLength(2);
+        expect(updated[0]?.text).toBe('Erste Frage.');
+        expect(updated[1]?.text).toBe('Zweite Frage.');
     });
 
     it('does not merge system notices into one bubble stream', () => {
