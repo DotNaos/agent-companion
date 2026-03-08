@@ -28,6 +28,7 @@ import { PermissionsView } from './components/PermissionsView.js';
 import { Badge } from './components/ui/badge.js';
 import { Button } from './components/ui/button.js';
 import { cn } from './lib/utils.js';
+import { parseJsonWebSocketData } from './websocket.js';
 
 const AUTO_SAVE_DELAY_MS = 900;
 
@@ -127,13 +128,20 @@ export function App() {
 
         const socket = new WebSocket(streamUrl);
         socket.addEventListener('message', (event) => {
-            const message = JSON.parse(event.data) as {
-                type: string;
-                data: Bootstrap;
-            };
-            if (message.type === 'bootstrap') {
-                syncBootstrap(message.data);
-            }
+            void (async () => {
+                const message = await parseJsonWebSocketData<{
+                    type: string;
+                    data: Bootstrap;
+                }>(event.data);
+                if (message.type === 'bootstrap') {
+                    syncBootstrap(message.data);
+                }
+            })().catch((parseError) => {
+                console.warn(
+                    'Failed to parse desktop bootstrap stream message.',
+                    parseError,
+                );
+            });
         });
         socket.addEventListener('error', () => {
             if (mode === 'admin') {

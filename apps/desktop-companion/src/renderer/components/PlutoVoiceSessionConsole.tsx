@@ -17,6 +17,7 @@ import { plutoAudioState } from './PlutoAvatar.js';
 import { Badge } from './ui/badge.js';
 import { Button } from './ui/button.js';
 import { ScrollArea } from './ui/scroll-area.js';
+import { parseJsonWebSocketData } from '../websocket.js';
 
 type VoiceTimelineEntry = {
     id: string;
@@ -231,13 +232,22 @@ export function PlutoVoiceSessionConsole({
         });
 
         socket.addEventListener('message', (event) => {
-            const parsed = plutoVoiceSessionStreamEventSchema.safeParse(
-                JSON.parse(String(event.data)),
-            );
-            if (!parsed.success) {
-                return;
-            }
-            handleStreamEvent(parsed.data);
+            void (async () => {
+                const payload = await parseJsonWebSocketData<unknown>(
+                    event.data,
+                );
+                const parsed =
+                    plutoVoiceSessionStreamEventSchema.safeParse(payload);
+                if (!parsed.success) {
+                    return;
+                }
+                handleStreamEvent(parsed.data);
+            })().catch((parseError) => {
+                console.warn(
+                    'Failed to parse Pluto voice session stream message.',
+                    parseError,
+                );
+            });
         });
 
         socket.addEventListener('close', (event) => {
