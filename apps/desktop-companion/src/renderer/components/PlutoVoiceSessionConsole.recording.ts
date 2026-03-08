@@ -18,6 +18,11 @@ type AudioCaptureGraph = {
     flush?: () => Promise<void>;
 };
 
+type ProcessingSink = {
+    connect: (node: AudioNode) => void;
+    disconnect: () => void;
+};
+
 export async function sendPlutoAudioChunk({
     chunk,
     currentClientId,
@@ -347,6 +352,7 @@ function createAudioWorkletCaptureGraph({
     );
     const silenceGain = audioContext.createGain();
     silenceGain.gain.value = 0;
+    const processingSink = createProcessingSink(audioContext);
 
     const flushWaiters = new Set<() => void>();
     workletNode.port.onmessage = (event) => {
@@ -366,7 +372,7 @@ function createAudioWorkletCaptureGraph({
 
     source.connect(workletNode);
     workletNode.connect(silenceGain);
-    silenceGain.connect(audioContext.destination);
+    processingSink.connect(silenceGain);
 
     return {
         dispose: () => {
@@ -374,6 +380,7 @@ function createAudioWorkletCaptureGraph({
             source.disconnect();
             workletNode.disconnect();
             silenceGain.disconnect();
+            processingSink.disconnect();
         },
         flush: () =>
             new Promise((resolve) => {
@@ -412,6 +419,7 @@ function createScriptProcessorCaptureGraph({
     source: MediaStreamAudioSourceNode;
 }>): AudioCaptureGraph {
     const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    const processingSink = createProcessingSink(audioContext);
 
     processor.onaudioprocess = (event) => {
         const input = event.inputBuffer.getChannelData(0);
@@ -427,13 +435,27 @@ function createScriptProcessorCaptureGraph({
     };
 
     source.connect(processor);
-    processor.connect(audioContext.destination);
+    processingSink.connect(processor);
 
     return {
         dispose: () => {
             processor.onaudioprocess = null;
             source.disconnect();
             processor.disconnect();
+            processingSink.disconnect();
+        },
+    };
+}
+
+function createProcessingSink(audioContext: AudioContext): ProcessingSink {
+    const destination = audioContext.createMediaStreamDestination();
+
+    return {
+        connect: (node) => {
+            node.connect(destination);
+        },
+        disconnect: () => {
+            destination.disconnect();
         },
     };
 }

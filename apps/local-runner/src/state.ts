@@ -24,6 +24,7 @@ import {
     plutoVoiceSessionClientSchema,
     plutoVoiceSessionCreateInputSchema,
     plutoVoiceSessionEventEnvelopeSchema,
+    plutoVoiceSessionHistoryListOutputSchema,
     plutoVoiceSessionSchema,
     plutoVoiceSessionSummarySchema,
     plutoVoiceSessionTextInputSchema,
@@ -61,6 +62,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { RunnerEnv } from "./env.js";
 import { logger } from "./logger.js";
+import { PlutoVoiceSessionHistoryStore } from "./pluto-history-store.js";
 import { PlutoService } from "./pluto.js";
 import { ProcessManager } from "./process-manager.js";
 
@@ -106,6 +108,7 @@ export class RunnerState {
   readonly configStore: FileBackedStore<AgentCompanionConfig>;
   readonly todoStore: FileBackedStore<z.infer<typeof todoStoreSchema>>;
   readonly plutoService: PlutoService;
+  readonly plutoVoiceHistoryStore: PlutoVoiceSessionHistoryStore;
   private readonly recentActivity: ActivityEvent[] = [];
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly approvalWaiters = new Map<string, ApprovalWaiter[]>();
@@ -168,6 +171,7 @@ export class RunnerState {
       version: 1,
       lists: [],
     }));
+    this.plutoVoiceHistoryStore = new PlutoVoiceSessionHistoryStore(env.PLUTO_HISTORY_STORE_PATH);
     this.processManager = new ProcessManager((entry) => {
       this.logActivity("process", entry.message, { processId: entry.processId, level: entry.level });
     });
@@ -233,6 +237,12 @@ export class RunnerState {
     return plutoVoiceSessionSchema.parse(session);
   }
 
+  getPlutoVoiceSessionHistory(sessionId: string, limit = 200) {
+    return plutoVoiceSessionHistoryListOutputSchema.parse(
+      this.plutoVoiceHistoryStore.listSessionHistory(sessionId, limit),
+    );
+  }
+
   createPlutoVoiceSession(input: unknown) {
     const parsed = plutoVoiceSessionCreateInputSchema.parse(input);
     const now = new Date().toISOString();
@@ -261,6 +271,7 @@ export class RunnerState {
     }
 
     this.plutoVoiceSessions.set(session.id, session);
+    this.plutoVoiceHistoryStore.ensureSession(session.id);
     this.plutoService.registerVoiceSession(session.id, {
       emit: (event) => this.handlePlutoVoiceSessionEvent(session.id, event),
     });
@@ -400,6 +411,7 @@ export class RunnerState {
     const parsed = plutoVoiceSessionTextInputSchema.parse(input);
     this.requireSpeakerClient(session, parsed.clientId);
     this.touchPlutoVoiceSessionClient(session, parsed.clientId);
+    this.plutoVoiceHistoryStore.appendTextInput(sessionId, parsed.clientId, parsed.text);
     session.status = "listening";
     this.touchPlutoVoiceSession(session);
     this.emitPlutoVoiceSessions();
@@ -625,6 +637,7 @@ export class RunnerState {
 
   private handlePlutoVoiceSessionEvent(sessionId: string, event: PlutoVoiceSessionStreamEvent) {
     const session = this.plutoVoiceSessions.get(sessionId);
+    this.plutoVoiceHistoryStore.appendStreamEvent(sessionId, event);
     if (session) {
       switch (event.type) {
         case "status":

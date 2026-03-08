@@ -13,6 +13,7 @@ import {
     plutoVoiceSessionCreateOutputSchema,
     plutoVoiceSessionDetachInputSchema,
     plutoVoiceSessionDetachOutputSchema,
+    plutoVoiceSessionHistoryListOutputSchema,
     plutoVoiceSessionSummarySchema,
     runnerStatusSchema,
 } from "@agent-companion/shared";
@@ -206,6 +207,19 @@ export class RunnerBridge extends EventEmitter {
       contentType: response.headers.get("content-type") ?? "audio/wav",
       buffer: Buffer.from(await response.arrayBuffer()),
     };
+  }
+
+  async fetchPlutoVoiceSessionHistory(sessionId: string, limit = 200) {
+    const response = await fetch(
+      new URL(
+        `/internal/pluto/sessions/${encodeURIComponent(sessionId)}/history?limit=${encodeURIComponent(String(limit))}`,
+        this.baseUrl,
+      ),
+    );
+    if (!response.ok) {
+      throw new Error(`Pluto voice session history request failed with ${response.status}`);
+    }
+    return plutoVoiceSessionHistoryListOutputSchema.parse(await response.json());
   }
 
   async createPlutoVoiceSession(input: unknown) {

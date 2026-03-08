@@ -12,6 +12,23 @@ import type { DesktopEnv } from "./env.js";
 import { createDesktopServer } from "./server.js";
 import { UserStore } from "./user-store.js";
 
+type FakeSession = {
+  id: string;
+  title: string | null;
+  host: {
+    id: string;
+    type: "local";
+    label: string;
+  };
+  status: "idle" | "listening" | "responding" | "error";
+  model: string;
+  createdAt: string;
+  lastActivityAt: string;
+  ownerClientId: string | null;
+  speakerClientId: string | null;
+  clients: Array<Record<string, unknown>>;
+};
+
 const tempDirs: string[] = [];
 
 function decodeWebSocketMessage(data: string | Buffer | ArrayBuffer | Buffer[]) {
@@ -99,6 +116,139 @@ describe("desktop admin server", () => {
 
     expect(response.status).toBe(200);
     expect(plutoOrchestrator.requestCommentary).toHaveBeenCalledWith("Say hello");
+  });
+
+  it("creates pairing codes and exchanges them for mobile access tokens", async () => {
+    const { app } = createTestServer({
+      allowedOrigins: ["https://admin.example.com"],
+    });
+
+    const pairingResponse = await request(app)
+      .post("/api/desktop/mobile/pairing-code")
+      .set("x-desktop-token", "desktop-token");
+
+    expect(pairingResponse.status).toBe(200);
+    expect(pairingResponse.body.code).toMatch(/^[A-F0-9]{8}$/);
+
+    const exchangeResponse = await request(app)
+      .post("/api/mobile/auth/exchange")
+      .send({
+        code: pairingResponse.body.code,
+        device: {
+          label: "Oli iPhone",
+          platform: "iOS",
+        },
+      });
+
+    expect(exchangeResponse.status).toBe(200);
+    expect(exchangeResponse.body.device).toMatchObject({
+      label: "Oli iPhone",
+      platform: "iOS",
+    });
+    expect(exchangeResponse.body.accessToken).toEqual(expect.any(String));
+  });
+
+  it("serves mobile bootstrap and Pluto history for authenticated devices", async () => {
+    const { app } = createTestServer({
+      allowedOrigins: ["https://admin.example.com"],
+    });
+
+    const pairingResponse = await request(app)
+      .post("/api/desktop/mobile/pairing-code")
+      .set("x-desktop-token", "desktop-token");
+    const exchangeResponse = await request(app)
+      .post("/api/mobile/auth/exchange")
+      .send({
+        code: pairingResponse.body.code,
+        device: {
+          label: "Oli iPhone",
+          platform: "iOS",
+        },
+      });
+    const token = exchangeResponse.body.accessToken as string;
+
+    const bootstrapResponse = await request(app)
+      .get("/api/mobile/bootstrap")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(bootstrapResponse.status).toBe(200);
+    expect(bootstrapResponse.body).toMatchObject({
+      runner: {
+        connectedToRemote: true,
+      },
+      pluto: {
+        history: [
+          {
+            id: "message-1",
+          },
+        ],
+      },
+    });
+
+    const historyResponse = await request(app)
+      .get("/api/mobile/pluto/history")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(historyResponse.status).toBe(200);
+    expect(historyResponse.body.history).toHaveLength(1);
+  });
+
+  it("creates Pluto sessions through the mobile API", async () => {
+    const { app } = createTestServer({
+      allowedOrigins: ["https://admin.example.com"],
+    });
+
+    const pairingResponse = await request(app)
+      .post("/api/desktop/mobile/pairing-code")
+      .set("x-desktop-token", "desktop-token");
+    const exchangeResponse = await request(app)
+      .post("/api/mobile/auth/exchange")
+      .send({
+        code: pairingResponse.body.code,
+        device: {
+          label: "Oli iPhone",
+          platform: "iOS",
+        },
+      });
+    const token = exchangeResponse.body.accessToken as string;
+
+    const createResponse = await request(app)
+      .post("/api/mobile/pluto/sessions")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: "Phone Pluto",
+        client: {
+          label: "Oli iPhone",
+          platform: "iOS",
+          requestedRole: "speaker",
+        },
+      });
+
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.body.session).toMatchObject({
+      title: "Phone Pluto",
+    });
+
+    const listResponse = await request(app)
+      .get("/api/mobile/pluto/sessions")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body.sessions).toHaveLength(1);
+
+    const historyResponse = await request(app)
+      .get(`/api/mobile/pluto/sessions/${createResponse.body.session.id}/history`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(historyResponse.status).toBe(200);
+    expect(historyResponse.body).toMatchObject({
+      sessionId: createResponse.body.session.id,
+      entries: [
+        {
+          kind: "text_input",
+        },
+      ],
+    });
   });
 
   it("proxies Pluto voice session websocket traffic for desktop clients", async () => {
@@ -262,6 +412,117 @@ describe("desktop admin server", () => {
     }
   });
 
+  it("proxies Pluto voice session websocket traffic for mobile clients", async () => {
+    const upstreamServer = http.createServer();
+    const upstreamWsServer = new WebSocketServer({ noServer: true });
+    const forwardedMessages: string[] = [];
+
+    upstreamServer.on("upgrade", (req, socket, head) => {
+      if (req.url !== "/internal/pluto/sessions/session-1/stream") {
+        socket.destroy();
+        return;
+      }
+      upstreamWsServer.handleUpgrade(req, socket, head, (ws) => {
+        upstreamWsServer.emit("connection", ws);
+      });
+    });
+
+    upstreamWsServer.on("connection", (ws) => {
+      ws.send(
+        JSON.stringify({
+          type: "session_snapshot",
+          session: {
+            id: "session-1",
+            title: "Mobile proxy test",
+            host: { id: "local", type: "local", label: "Mac" },
+            status: "idle",
+            model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+            createdAt: new Date().toISOString(),
+            lastActivityAt: new Date().toISOString(),
+            ownerClientId: "client-1",
+            speakerClientId: "client-1",
+            clients: [],
+          },
+        }),
+      );
+
+      ws.on("message", (data) => {
+        forwardedMessages.push(decodeWebSocketMessage(data));
+        ws.send(JSON.stringify({ type: "output_transcription", turnId: 1, text: "Hallo iPhone" }));
+      });
+    });
+
+    await new Promise<void>((resolve) => {
+      upstreamServer.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const upstreamAddress = upstreamServer.address();
+    const upstreamPort =
+      typeof upstreamAddress === "object" && upstreamAddress ? upstreamAddress.port : 0;
+    const { app, server } = createTestServer({
+      allowedOrigins: ["https://admin.example.com"],
+      localRunnerPort: upstreamPort,
+    });
+
+    try {
+      const pairingResponse = await request(app)
+        .post("/api/desktop/mobile/pairing-code")
+        .set("x-desktop-token", "desktop-token");
+      const exchangeResponse = await request(app)
+        .post("/api/mobile/auth/exchange")
+        .send({
+          code: pairingResponse.body.code,
+          device: {
+            label: "Oli iPhone",
+            platform: "iOS",
+          },
+        });
+      const token = exchangeResponse.body.accessToken as string;
+
+      await server.listen();
+      const desktopAddress = server.server.address();
+      const desktopPort =
+        typeof desktopAddress === "object" && desktopAddress ? desktopAddress.port : 0;
+      const received: Array<Record<string, unknown>> = [];
+
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(
+          `ws://127.0.0.1:${desktopPort}/api/mobile/pluto/sessions/session-1/stream`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        ws.on("message", (data) => {
+          const parsed = JSON.parse(decodeWebSocketMessage(data)) as Record<string, unknown>;
+          received.push(parsed);
+          if (parsed.type === "session_snapshot") {
+            ws.send(JSON.stringify({ type: "ping" }));
+            return;
+          }
+          if (parsed.type === "output_transcription") {
+            ws.close();
+            resolve();
+          }
+        });
+
+        ws.on("error", reject);
+      });
+
+      expect(received[0]).toMatchObject({ type: "session_snapshot" });
+      expect(received.some((entry) => entry.type === "output_transcription")).toBe(true);
+      expect(forwardedMessages).toContain(JSON.stringify({ type: "ping" }));
+    } finally {
+      await server.close();
+      upstreamWsServer.close();
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
 
 });
 
@@ -313,6 +574,12 @@ function createTestServer({
   } as AgentCompanionConfig;
 
   class FakeRunnerBridge extends EventEmitter {
+    private readonly sessions: FakeSession[] = [];
+
+    get isConnected() {
+      return true;
+    }
+
     getSnapshot() {
       return {
         status: {
@@ -324,18 +591,30 @@ function createTestServer({
         config,
         activity: [],
         approvals: [],
-        plutoVoiceSessions: [],
-          pluto: {
-            available: false,
-            muted: false,
-            autoCommentaryEnabled: false,
-            commentaryIntervalMs: 30000,
-            model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
-            pending: false,
-            lastError: null,
-            activeMessage: null,
-            history: [],
-          },
+        plutoVoiceSessions: this.sessions,
+        pluto: {
+          available: false,
+          muted: false,
+          autoCommentaryEnabled: false,
+          commentaryIntervalMs: 30000,
+          model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+          pending: false,
+          lastError: null,
+          activeMessage: null,
+          history: [
+            {
+              id: "message-1",
+              source: "system",
+              delivery: "bubble",
+              tone: "neutral",
+              title: "Welcome",
+              text: "Pluto ready on mobile.",
+              createdAt: new Date().toISOString(),
+              expiresAt: null,
+              audioAvailable: false,
+            },
+          ],
+        },
       };
     }
 
@@ -345,6 +624,100 @@ function createTestServer({
 
     async decideApproval() {
       return { ok: true };
+    }
+
+    async createPlutoVoiceSession(input: Record<string, unknown>) {
+      const now = new Date().toISOString();
+      const session: FakeSession = {
+        id: `session-${this.sessions.length + 1}`,
+        title: typeof input.title === "string" ? input.title : null,
+        host: {
+          id: "local",
+          type: "local",
+          label: "Mac",
+        },
+        status: "idle",
+        model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+        createdAt: now,
+        lastActivityAt: now,
+        ownerClientId: "client-1",
+        speakerClientId: "client-1",
+        clients: [],
+      };
+      this.sessions.unshift(session);
+      return {
+        session,
+        client: {
+          id: "client-1",
+          label: "Oli iPhone",
+          platform: "iOS",
+          joinedAt: now,
+          lastSeenAt: now,
+          canSendAudio: true,
+          canReceiveAudio: true,
+          canObserve: true,
+        },
+      };
+    }
+
+    async attachPlutoVoiceSession(sessionId: string, input: Record<string, unknown>) {
+      const session = this.sessions.find((entry) => entry.id === sessionId) ?? this.sessions[0];
+      if (!session) {
+        throw new Error("No fake Pluto session available for attach");
+      }
+      const now = new Date().toISOString();
+      const client = {
+        id: `client-${session.clients.length + 2}`,
+        label: input.label ?? "Observer",
+        platform: input.platform ?? null,
+        joinedAt: now,
+        lastSeenAt: now,
+        canSendAudio: input.requestedRole === "speaker",
+        canReceiveAudio: true,
+        canObserve: true,
+      };
+      session.clients.push(client);
+      return { session, client };
+    }
+
+    async detachPlutoVoiceSession(sessionId: string, input: Record<string, unknown>) {
+      const session = this.sessions.find((entry) => entry.id === sessionId) ?? this.sessions[0];
+      if (!session) {
+        throw new Error("No fake Pluto session available for detach");
+      }
+      session.clients = session.clients.filter((entry) => entry.id !== input.clientId);
+      return { session, detachedClientId: input.clientId };
+    }
+
+    async closePlutoVoiceSession(sessionId: string) {
+      const index = this.sessions.findIndex((entry) => entry.id === sessionId);
+      if (index >= 0) {
+        this.sessions.splice(index, 1);
+      }
+      return { closedSessionId: sessionId };
+    }
+
+    async fetchPlutoAudio() {
+      return {
+        contentType: "audio/wav",
+        buffer: Buffer.from("fake"),
+      };
+    }
+
+    async fetchPlutoVoiceSessionHistory(sessionId: string) {
+      return {
+        sessionId,
+        entries: [
+          {
+            kind: "text_input",
+            id: "history-1",
+            sessionId,
+            createdAt: new Date().toISOString(),
+            clientId: "client-1",
+            text: "Hallo vom iPhone",
+          },
+        ],
+      };
     }
   }
 

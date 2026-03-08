@@ -30,6 +30,7 @@ type AudioGlobal = typeof globalThis & {
 
 const ACTIVE_OVERLAY_FRAME_INTERVAL_MS = 80;
 const IDLE_OVERLAY_FRAME_INTERVAL_MS = 350;
+const OVERLAY_AUDIO_ANALYSER_INTERVAL_MS = 80;
 
 export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
     const [voiceSelection, setVoiceSelection] = useState<PlutoVoiceSelection>(
@@ -252,7 +253,9 @@ export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
     return (
         <div className="overlay-shell">
             <div
-                className={`pet-dock ${avatarState} ${curious ? 'curious' : ''}`}>
+                className={['pet-dock', avatarState, curious ? 'curious' : '']
+                    .filter(Boolean)
+                    .join(' ')}>
                 {bubbleContent}
                 {voiceSelection.sessionId ? (
                     <div className="pet-bubble max-w-88 overflow-hidden">
@@ -354,6 +357,7 @@ function bindAudioAnalyser(
     isCancelled: () => boolean,
 ) {
     const globals = globalThis as AudioGlobal;
+    let volumeTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 
     const connectAnalyser = () => {
         try {
@@ -395,6 +399,10 @@ function bindAudioAnalyser(
             const dataArray = new Uint8Array(analyser.frequencyBinCount);
             const updateVolume = () => {
                 if (audio.paused || audio.ended || isCancelled()) {
+                    if (volumeTimer !== null) {
+                        globalThis.clearTimeout(volumeTimer);
+                        volumeTimer = null;
+                    }
                     resetPlutoSpeakingState();
                     return;
                 }
@@ -407,7 +415,10 @@ function bindAudioAnalyser(
                 const average = sum / dataArray.length;
                 setPlutoSpeakingState(true, average / 255);
 
-                requestAnimationFrame(updateVolume);
+                volumeTimer = globalThis.setTimeout(
+                    updateVolume,
+                    OVERLAY_AUDIO_ANALYSER_INTERVAL_MS,
+                );
             };
 
             updateVolume();
@@ -417,4 +428,16 @@ function bindAudioAnalyser(
     };
 
     audio.addEventListener('play', connectAnalyser);
+    audio.addEventListener('ended', () => {
+        if (volumeTimer !== null) {
+            globalThis.clearTimeout(volumeTimer);
+            volumeTimer = null;
+        }
+    });
+    audio.addEventListener('pause', () => {
+        if (volumeTimer !== null) {
+            globalThis.clearTimeout(volumeTimer);
+            volumeTimer = null;
+        }
+    });
 }

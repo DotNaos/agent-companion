@@ -9,6 +9,7 @@ import {
 } from './PlutoVoiceSessionConsole.devices.js';
 
 type PlaybackHookOptions = Readonly<{
+    enabled?: boolean;
     selectedOutputId: string | null;
     onInfo: (message: string) => void;
 }>;
@@ -18,9 +19,14 @@ type PendingAudioChunk = {
     mimeType: string;
 };
 
-const MAX_PCM_BATCH_DURATION_SECONDS = 0.18;
+const MAX_PCM_BATCH_DURATION_SECONDS = 0.32;
+const PCM_START_BUFFER_SECONDS = 0.18;
+const PCM_RESUME_BUFFER_SECONDS = 0.06;
+const PCM_SCHEDULE_AHEAD_SECONDS = 0.24;
+const PCM_EDGE_FADE_SECONDS = 0.004;
 
 export function usePlutoVoicePlayback({
+    enabled = true,
     selectedOutputId,
     onInfo,
 }: PlaybackHookOptions) {
@@ -34,7 +40,9 @@ export function usePlutoVoicePlayback({
     const pendingPlaybackTurnsRef = useRef(
         new Map<number, PendingAudioChunk[]>(),
     );
+    const startedPcmTurnsRef = useRef(new Set<number>());
     const outputRoutingWarningShownRef = useRef(false);
+    const pcmSchedulingRef = useRef<Promise<void> | null>(null);
 
     useEffect(() => {
         outputRoutingWarningShownRef.current = false;
@@ -63,11 +71,13 @@ export function usePlutoVoicePlayback({
     }, [onInfo, selectedOutputId]);
 
     function stopPlayback() {
+        pcmSchedulingRef.current = null;
         scheduledPlaybackTimeRef.current = 0;
         activePlaybackCountRef.current = 0;
         currentPlaybackTurnIdRef.current = null;
         completedPlaybackTurnsRef.current.clear();
         pendingPlaybackTurnsRef.current.clear();
+        startedPcmTurnsRef.current.clear();
 
         for (const source of pcmSourcesRef.current) {
             try {
@@ -93,6 +103,10 @@ export function usePlutoVoicePlayback({
         audioBase64: string,
         mimeType: string,
     ) {
+        if (!enabled) {
+            return;
+        }
+
         const queue = pendingPlaybackTurnsRef.current.get(turnId) ?? [];
         const bytes = decodeBase64(audioBase64);
 
@@ -107,50 +121,70 @@ export function usePlutoVoicePlayback({
     }
 
     function markOutputTurnComplete(turnId: number) {
+        if (!enabled) {
+            return;
+        }
+
         completedPlaybackTurnsRef.current.add(turnId);
         maybeAdvancePlaybackTurn();
     }
 
     function maybeAdvancePlaybackTurn() {
-        const currentTurnId = currentPlaybackTurnIdRef.current;
-
-        if (currentTurnId !== null) {
-            const currentQueue =
-                pendingPlaybackTurnsRef.current.get(currentTurnId);
-            if (
-                currentQueue &&
-                currentQueue.length > 0 &&
-                activePlaybackCountRef.current === 0
-            ) {
-                const nextChunk = currentQueue.shift();
-                if (!nextChunk) {
-                    return;
-                }
-                if (currentQueue.length === 0) {
-                    pendingPlaybackTurnsRef.current.delete(currentTurnId);
-                }
-                void playIncomingAudioChunk(
-                    nextChunk.bytes,
-                    nextChunk.mimeType,
-                );
-                return;
-            }
-
-            if (activePlaybackCountRef.current > 0) {
-                return;
-            }
-
-            if (
-                !completedPlaybackTurnsRef.current.has(currentTurnId) ||
-                (currentQueue && currentQueue.length > 0)
-            ) {
-                return;
-            }
-
-            currentPlaybackTurnIdRef.current = null;
-            completedPlaybackTurnsRef.current.delete(currentTurnId);
+        if (!enabled) {
+            return;
         }
 
+        if (advanceCurrentPlaybackTurn()) {
+            return;
+        }
+
+        startNextPlaybackTurn();
+    }
+
+    function advanceCurrentPlaybackTurn() {
+        const currentTurnId = currentPlaybackTurnIdRef.current;
+        if (currentTurnId === null) {
+            return false;
+        }
+
+        const currentQueue = pendingPlaybackTurnsRef.current.get(currentTurnId);
+        if (currentQueue?.length && isPcmChunk(currentQueue[0])) {
+            void scheduleQueuedPcmChunks(currentTurnId);
+            return true;
+        }
+
+        if (currentQueue?.length && activePlaybackCountRef.current === 0) {
+            const nextChunk = currentQueue.shift();
+            if (!nextChunk) {
+                return true;
+            }
+
+            if (currentQueue.length === 0) {
+                pendingPlaybackTurnsRef.current.delete(currentTurnId);
+            }
+
+            void playIncomingAudioChunk(nextChunk.bytes, nextChunk.mimeType);
+            return true;
+        }
+
+        if (activePlaybackCountRef.current > 0) {
+            return true;
+        }
+
+        if (
+            !completedPlaybackTurnsRef.current.has(currentTurnId) ||
+            Boolean(currentQueue?.length)
+        ) {
+            return true;
+        }
+
+        currentPlaybackTurnIdRef.current = null;
+        completedPlaybackTurnsRef.current.delete(currentTurnId);
+        startedPcmTurnsRef.current.delete(currentTurnId);
+        return false;
+    }
+
+    function startNextPlaybackTurn() {
         const nextTurnId = [...pendingPlaybackTurnsRef.current.keys()].sort(
             (left, right) => left - right,
         )[0];
@@ -160,6 +194,17 @@ export function usePlutoVoicePlayback({
         }
 
         const nextQueue = pendingPlaybackTurnsRef.current.get(nextTurnId);
+        if (!nextQueue || nextQueue.length === 0) {
+            pendingPlaybackTurnsRef.current.delete(nextTurnId);
+            return;
+        }
+
+        if (isPcmChunk(nextQueue[0])) {
+            currentPlaybackTurnIdRef.current = nextTurnId;
+            void scheduleQueuedPcmChunks(nextTurnId);
+            return;
+        }
+
         const nextChunk = nextQueue?.shift();
         if (!nextQueue || !nextChunk) {
             pendingPlaybackTurnsRef.current.delete(nextTurnId);
@@ -172,6 +217,81 @@ export function usePlutoVoicePlayback({
 
         currentPlaybackTurnIdRef.current = nextTurnId;
         void playIncomingAudioChunk(nextChunk.bytes, nextChunk.mimeType);
+    }
+
+    async function scheduleQueuedPcmChunks(turnId: number) {
+        if (pcmSchedulingRef.current !== null) {
+            return;
+        }
+
+        pcmSchedulingRef.current = (async () => {
+            const ctx = await ensureAudioContext();
+            if (!ctx) {
+                return;
+            }
+
+            try {
+                await applyOutputDeviceToAudioContext(
+                    ctx,
+                    selectedOutputId,
+                    onInfo,
+                    outputRoutingWarningShownRef,
+                );
+            } catch {
+                onInfo(
+                    'Pluto could not switch the playback device and will stay on the system default output.',
+                );
+            }
+
+            while (currentPlaybackTurnIdRef.current === turnId) {
+                const queue = pendingPlaybackTurnsRef.current.get(turnId);
+                if (!queue || queue.length === 0) {
+                    break;
+                }
+
+                const nextChunk = queue[0];
+                if (!nextChunk || !isPcmChunk(nextChunk)) {
+                    break;
+                }
+
+                const bufferedSeconds = getQueuedPcmDurationSeconds(queue);
+                const turnCompleted = completedPlaybackTurnsRef.current.has(turnId);
+                const hasStartedTurn = startedPcmTurnsRef.current.has(turnId);
+                const scheduleLeadSeconds = Math.max(
+                    0,
+                    scheduledPlaybackTimeRef.current - ctx.currentTime,
+                );
+                const minimumBufferedSeconds = hasStartedTurn
+                    ? PCM_RESUME_BUFFER_SECONDS
+                    : PCM_START_BUFFER_SECONDS;
+
+                if (
+                    shouldWaitForMorePcmAudio({
+                        activePlaybackCount: activePlaybackCountRef.current,
+                        turnCompleted,
+                        bufferedSeconds,
+                        minimumBufferedSeconds,
+                        scheduleLeadSeconds,
+                    })
+                ) {
+                    break;
+                }
+
+                queue.shift();
+                if (queue.length === 0) {
+                    pendingPlaybackTurnsRef.current.delete(turnId);
+                }
+
+                schedulePcmChunkWithContext(ctx, nextChunk.bytes, nextChunk.mimeType);
+            }
+        })().finally(() => {
+            pcmSchedulingRef.current = null;
+            queueMicrotask(() => {
+                maybeAdvancePlaybackTurn();
+            });
+        });
+
+        await pcmSchedulingRef.current;
     }
 
     async function playIncomingAudioChunk(bytes: Uint8Array, mimeType: string) {
@@ -188,15 +308,37 @@ export function usePlutoVoicePlayback({
             return;
         }
 
-        await applyOutputDeviceToAudioContext(
-            ctx,
-            selectedOutputId,
-            onInfo,
-            outputRoutingWarningShownRef,
-        );
+        try {
+            await applyOutputDeviceToAudioContext(
+                ctx,
+                selectedOutputId,
+                onInfo,
+                outputRoutingWarningShownRef,
+            );
+        } catch {
+            onInfo(
+                'Pluto could not switch the playback device and will stay on the system default output.',
+            );
+        }
+
+        schedulePcmChunkWithContext(ctx, bytes, mimeType);
+    }
+
+    function schedulePcmChunkWithContext(
+        ctx: AudioContext,
+        bytes: Uint8Array,
+        mimeType: string,
+    ) {
+        if (!enabled) {
+            return;
+        }
 
         const sampleRate = parseSampleRate(mimeType, 24_000);
         const frameCount = Math.floor(bytes.length / 2);
+        if (frameCount === 0) {
+            return;
+        }
+
         const samples = new Float32Array(frameCount);
         const view = new DataView(
             bytes.buffer,
@@ -221,29 +363,30 @@ export function usePlutoVoicePlayback({
         gainNode.connect(ctx.destination);
         pcmSourcesRef.current.add(source);
 
-        const crossfadeDuration = Math.min(0.008, buffer.duration / 4);
-        const startAt = Math.max(
-            ctx.currentTime,
-            scheduledPlaybackTimeRef.current - crossfadeDuration,
+        const edgeFadeDuration = Math.min(
+            PCM_EDGE_FADE_SECONDS,
+            buffer.duration / 8,
         );
+        const activeTurnId = currentPlaybackTurnIdRef.current;
+        if (activeTurnId !== null) {
+            startedPcmTurnsRef.current.add(activeTurnId);
+        }
+        const startAt = Math.max(ctx.currentTime, scheduledPlaybackTimeRef.current);
+        const endAt = startAt + buffer.duration;
         scheduledPlaybackTimeRef.current = startAt + buffer.duration;
         activePlaybackCountRef.current += 1;
         setIsPlaying(true);
-        setPlutoSpeakingState(true, Math.min(1, amplitudeSum / frameCount));
+        const speakingLevel =
+            frameCount > 0 ? Math.min(1, amplitudeSum / frameCount) : 0;
+        setPlutoSpeakingState(true, speakingLevel);
 
         gainNode.gain.setValueAtTime(0, startAt);
-        gainNode.gain.linearRampToValueAtTime(
-            1,
-            startAt + crossfadeDuration,
-        );
+        gainNode.gain.linearRampToValueAtTime(1, startAt + edgeFadeDuration);
         gainNode.gain.setValueAtTime(
             1,
-            Math.max(startAt + crossfadeDuration, startAt),
+            Math.max(startAt + edgeFadeDuration, endAt - edgeFadeDuration),
         );
-        gainNode.gain.linearRampToValueAtTime(
-            0,
-            startAt + buffer.duration,
-        );
+        gainNode.gain.linearRampToValueAtTime(0, endAt);
 
         source.addEventListener('ended', () => {
             pcmSourcesRef.current.delete(source);
@@ -355,11 +498,7 @@ function appendPcmChunk(
     );
     const previous = queue.at(-1);
 
-    if (
-        previous &&
-        previous.mimeType === mimeType &&
-        previous.bytes.byteLength < maxBatchBytes
-    ) {
+    if (previous?.mimeType === mimeType && previous.bytes.byteLength < maxBatchBytes) {
         previous.bytes = concatUint8Arrays(previous.bytes, nextBytes);
         return;
     }
@@ -397,6 +536,10 @@ async function ensureAudioContext() {
         _plutoVoiceAudioCtx?: AudioContext;
     };
 
+    if (globalState._plutoVoiceAudioCtx?.state === 'closed') {
+        globalState._plutoVoiceAudioCtx = undefined;
+    }
+
     if (!globalState._plutoVoiceAudioCtx) {
         globalState._plutoVoiceAudioCtx = new AudioContextCtor();
     }
@@ -404,6 +547,52 @@ async function ensureAudioContext() {
         await globalState._plutoVoiceAudioCtx.resume();
     }
     return globalState._plutoVoiceAudioCtx;
+}
+
+function isPcmChunk(chunk: PendingAudioChunk | undefined) {
+    return Boolean(chunk?.mimeType.startsWith('audio/pcm'));
+}
+
+function getQueuedPcmDurationSeconds(queue: PendingAudioChunk[]) {
+    let totalFrames = 0;
+    let sampleRate = 24_000;
+
+    for (const chunk of queue) {
+        if (!isPcmChunk(chunk)) {
+            break;
+        }
+
+        sampleRate = parseSampleRate(chunk.mimeType, sampleRate);
+        totalFrames += Math.floor(chunk.bytes.byteLength / 2);
+    }
+
+    return totalFrames / sampleRate;
+}
+
+function shouldWaitForMorePcmAudio(input: {
+    activePlaybackCount: number;
+    turnCompleted: boolean;
+    bufferedSeconds: number;
+    minimumBufferedSeconds: number;
+    scheduleLeadSeconds: number;
+}) {
+    if (
+        input.activePlaybackCount === 0 &&
+        !input.turnCompleted &&
+        input.bufferedSeconds < input.minimumBufferedSeconds
+    ) {
+        return true;
+    }
+
+    if (
+        input.activePlaybackCount > 0 &&
+        !input.turnCompleted &&
+        input.scheduleLeadSeconds >= PCM_SCHEDULE_AHEAD_SECONDS
+    ) {
+        return true;
+    }
+
+    return false;
 }
 
 function parseSampleRate(mimeType: string, fallback: number) {

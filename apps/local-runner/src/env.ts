@@ -24,6 +24,7 @@ const envSchema = z.object({
   TODO_STORE_PATH: z.string().default(path.join(os.homedir(), ".agent-companion", "todos.json")),
   ACTIVITY_LOG_PATH: z.string().default(path.join(os.homedir(), ".agent-companion", "activity.log")),
   PLUTO_AUDIO_DIR: z.string().default(path.join(os.homedir(), ".agent-companion", "pluto-audio")),
+  PLUTO_HISTORY_STORE_PATH: z.string().default(path.join(os.homedir(), ".agent-companion", "pluto-history.json")),
   DEFAULT_ADMIN_EMAIL: z.string().email().default("admin@example.com"),
   DEFAULT_ALLOWED_ORIGINS: z.string().default(""),
   DEFAULT_GOOGLE_CLIENT_IDS: z.string().default(""),

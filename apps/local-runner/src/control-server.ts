@@ -6,6 +6,7 @@ import {
     plutoVoiceSessionCreateInputSchema,
     plutoVoiceSessionDetachInputSchema,
     plutoVoiceSessionEventEnvelopeSchema,
+    plutoVoiceSessionHistoryQuerySchema,
     plutoVoiceSessionStreamClientMessageSchema,
 } from "@agent-companion/shared";
 import express from "express";
@@ -79,6 +80,11 @@ export async function startControlServer(state: RunnerState, port: number) {
 
   app.get("/internal/pluto/sessions/:sessionId", (req, res) => {
     res.json({ session: state.getPlutoVoiceSession(req.params.sessionId) });
+  });
+
+  app.get("/internal/pluto/sessions/:sessionId/history", (req, res) => {
+    const query = plutoVoiceSessionHistoryQuerySchema.parse(req.query);
+    res.json(state.getPlutoVoiceSessionHistory(req.params.sessionId, query.limit));
   });
 
   app.post("/internal/pluto/sessions", (req, res) => {

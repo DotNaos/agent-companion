@@ -156,6 +156,52 @@ describe("control server Pluto voice sessions", () => {
       await server.close();
     }
   });
+
+  it("returns persisted Pluto session history over HTTP", async () => {
+    const ctx = createContext();
+    const server = await startControlServer(ctx.state, 0);
+
+    try {
+      const created = ctx.state.createPlutoVoiceSession({
+        title: "History Pluto",
+        client: {
+          label: "Desktop",
+          requestedRole: "speaker",
+        },
+      });
+
+      await expect(
+        ctx.state.sendPlutoVoiceSessionText(created.session.id, {
+          clientId: created.client!.id,
+          text: "Was gibt's Neues?",
+        }),
+      ).rejects.toMatchObject({ code: "PLUTO_VOICE_TEXT_SEND_FAILED" });
+
+      const historyResponse = await fetch(
+        `http://127.0.0.1:${server.port}/internal/pluto/sessions/${created.session.id}/history?limit=10`,
+      );
+
+      expect(historyResponse.status).toBe(200);
+      const history = await historyResponse.json();
+      expect(history).toMatchObject({
+        sessionId: created.session.id,
+      });
+      expect(history.entries).toHaveLength(2);
+      expect(history.entries[0]).toMatchObject({
+        kind: "text_input",
+        text: "Was gibt's Neues?",
+      });
+      expect(history.entries[1]).toMatchObject({
+        kind: "stream_event",
+        event: {
+          type: "error",
+          code: "PLUTO_VOICE_TEXT_SEND_FAILED",
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 function createContext() {
@@ -176,6 +222,7 @@ function createContext() {
     TODO_STORE_PATH: path.join(dir, "todos.json"),
     ACTIVITY_LOG_PATH: path.join(dir, "activity.log"),
     PLUTO_AUDIO_DIR: path.join(dir, "pluto-audio"),
+    PLUTO_HISTORY_STORE_PATH: path.join(dir, "pluto-history.json"),
     DEFAULT_ADMIN_EMAIL: "admin@example.com",
     DEFAULT_ALLOWED_ORIGINS: "https://admin.example.com",
     DEFAULT_GOOGLE_CLIENT_IDS: "client-id",

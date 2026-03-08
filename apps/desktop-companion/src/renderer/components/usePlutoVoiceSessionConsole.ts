@@ -95,6 +95,7 @@ export function usePlutoVoiceSessionConsole({
     const isSpeaker =
         Boolean(clientId) && activeSession?.speakerClientId === clientId;
     const isOverlay = variant === 'overlay';
+    const playbackEnabled = !isOverlay;
     const currentSpeakerClientId =
         activeSession?.speakerClientId ??
         selectedSummary?.speakerClientId ??
@@ -117,7 +118,11 @@ export function usePlutoVoiceSessionConsole({
     };
 
     const audioDevices = usePlutoAudioDevices({ isRecording, onInfo: publishInfo });
-    const playback = usePlutoVoicePlayback({ selectedOutputId: audioDevices.selectedOutputId, onInfo });
+    const playback = usePlutoVoicePlayback({
+        enabled: playbackEnabled,
+        selectedOutputId: audioDevices.selectedOutputId,
+        onInfo,
+    });
 
     const recordingHint = getRecordingHint(
         isSpeaker,

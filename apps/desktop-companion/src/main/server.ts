@@ -2,6 +2,8 @@ import {
     AppError,
     agentCompanionConfigSchema,
     approvalDecisionSchema,
+    mobileBootstrapOutputSchema,
+    mobilePlutoHistoryOutputSchema,
     plutoVoiceSessionAttachInputSchema,
     plutoVoiceSessionCreateInputSchema,
     plutoVoiceSessionDetachInputSchema,
@@ -22,6 +24,7 @@ import {
 } from "./auth.js";
 import type { CursorTracker } from "./cursor-tracker.js";
 import type { DesktopEnv } from "./env.js";
+import { MobileAuthManager, resolveMobileAccessToken } from "./mobile-auth.js";
 import type { PlutoOrchestrator } from "./pluto-orchestrator.js";
 import type { RunnerBridge } from "./runner-bridge.js";
 
@@ -40,6 +43,10 @@ interface CreateDesktopServerOptions {
 
 export function createDesktopServer(options: CreateDesktopServerOptions) {
   const { env, cursorTracker, runnerBridge, plutoOrchestrator, tunnelManager, userStore, desktopToken } = options;
+  const mobileAuth = new MobileAuthManager(
+    env.SESSION_SECRET,
+    path.join(path.dirname(env.USER_STORE_PATH), "mobile-devices.json"),
+  );
   const app = express();
   app.use(cookieParser());
   app.use(express.json({ limit: "1mb" }));
@@ -95,10 +102,22 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
     res.status(204).end();
   });
 
+  app.post("/api/mobile/auth/exchange", async (req, res, next) => {
+    try {
+      res.json(await mobileAuth.exchangePairingCode(req.body ?? {}));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/desktop", requireDesktopToken(desktopToken), renderAppShell(env, "desktop"));
   app.get("/overlay", requireDesktopToken(desktopToken), renderAppShell(env, "overlay"));
   app.get("/admin", renderAppShell(env, "admin"));
   app.get("/login", renderAppShell(env, "login"));
+
+  app.post("/api/desktop/mobile/pairing-code", requireDesktopToken(desktopToken), (_req, res) => {
+    res.json(mobileAuth.createPairingCode());
+  });
 
   app.get("/api/desktop/bootstrap", requireDesktopToken(desktopToken), (_req, res) => {
     res.json(buildBootstrap(env, runnerBridge, tunnelManager, cursorTracker));
@@ -286,6 +305,81 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
     res.status(501).json({ error: "Runner lifecycle is managed externally in this setup." });
   });
 
+  app.post("/api/admin/mobile/pairing-code", (_req, res) => {
+    res.json(mobileAuth.createPairingCode());
+  });
+
+  app.use("/api/mobile", requireMobileAccess(mobileAuth));
+  app.get("/api/mobile/bootstrap", (_req, res) => {
+    res.json(buildMobileBootstrap(env, runnerBridge, tunnelManager));
+  });
+  app.get("/api/mobile/pluto/history", (_req, res) => {
+    res.json(
+      mobilePlutoHistoryOutputSchema.parse({
+        history: runnerBridge.getSnapshot().pluto.history,
+      }),
+    );
+  });
+  app.get("/api/mobile/pluto/sessions", (_req, res) => {
+    res.json({ sessions: runnerBridge.getSnapshot().plutoVoiceSessions });
+  });
+  app.get("/api/mobile/pluto/sessions/:sessionId/history", async (req, res, next) => {
+    try {
+      const limit = Number(req.query.limit ?? 200);
+      res.json(await runnerBridge.fetchPlutoVoiceSessionHistory(getRouteParam(req.params.sessionId), limit));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/mobile/pluto/sessions", async (req, res, next) => {
+    try {
+      const input = plutoVoiceSessionCreateInputSchema.parse(req.body ?? {});
+      res.status(201).json(await runnerBridge.createPlutoVoiceSession(input));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/mobile/pluto/sessions/:sessionId/attach", async (req, res, next) => {
+    try {
+      const input = plutoVoiceSessionAttachInputSchema.parse(req.body ?? {});
+      res.json(await runnerBridge.attachPlutoVoiceSession(getRouteParam(req.params.sessionId), input));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/mobile/pluto/sessions/:sessionId/detach", async (req, res, next) => {
+    try {
+      const input = plutoVoiceSessionDetachInputSchema.parse(req.body ?? {});
+      res.json(await runnerBridge.detachPlutoVoiceSession(getRouteParam(req.params.sessionId), input));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/mobile/pluto/sessions/:sessionId/close", async (req, res, next) => {
+    try {
+      res.json(await runnerBridge.closePlutoVoiceSession(getRouteParam(req.params.sessionId)));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get("/api/mobile/pluto/audio/:messageId", async (req, res, next) => {
+    try {
+      const messageId = Array.isArray(req.params.messageId) ? req.params.messageId[0] : req.params.messageId;
+      const audio = await runnerBridge.fetchPlutoAudio(messageId);
+      res.type(audio.contentType).send(audio.buffer);
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/mobile/approvals/decision", async (req, res, next) => {
+    try {
+      const decision = approvalDecisionSchema.parse(req.body);
+      res.json(await runnerBridge.decideApproval(decision));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.use((error: unknown, _req: Request, res: Response, _next: express.NextFunction) => {
     const envelope = toErrorEnvelope(error);
     res.status(error instanceof AppError ? error.statusCode : 500).json(envelope);
@@ -301,10 +395,12 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
     const isAdmin = requestUrl.pathname === "/api/admin/stream";
     const desktopSessionMatch = /^\/api\/desktop\/pluto\/sessions\/([^/]+)\/stream$/.exec(requestUrl.pathname);
     const adminSessionMatch = /^\/api\/admin\/pluto\/sessions\/([^/]+)\/stream$/.exec(requestUrl.pathname);
+    const mobileSessionMatch = /^\/api\/mobile\/pluto\/sessions\/([^/]+)\/stream$/.exec(requestUrl.pathname);
     const isDesktopSession = Boolean(desktopSessionMatch);
     const isAdminSession = Boolean(adminSessionMatch);
+    const isMobileSession = Boolean(mobileSessionMatch);
 
-    if (!isDesktop && !isAdmin && !isDesktopSession && !isAdminSession) {
+    if (!isDesktop && !isAdmin && !isDesktopSession && !isAdminSession && !isMobileSession) {
       socket.destroy();
       return;
     }
@@ -322,6 +418,12 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
         const cookies = parseCookieHeader(req.headers.cookie);
         await verifySession(cookies.agent_companion_session, env.SESSION_SECRET);
       }
+      if (isMobileSession) {
+        await mobileAuth.verifyAccessToken(resolveMobileAccessToken({
+          headers: req.headers,
+          query: Object.fromEntries(requestUrl.searchParams.entries()),
+        }));
+      }
     } catch {
       socket.destroy();
       return;
@@ -334,7 +436,7 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
       return;
     }
 
-    const sessionId = decodeURIComponent(desktopSessionMatch?.[1] ?? adminSessionMatch?.[1] ?? "");
+    const sessionId = decodeURIComponent(desktopSessionMatch?.[1] ?? adminSessionMatch?.[1] ?? mobileSessionMatch?.[1] ?? "");
     plutoSessionProxyServer.handleUpgrade(req, socket, head, (ws) => {
       plutoSessionProxyServer.emit("connection", ws, sessionId);
     });
@@ -478,6 +580,26 @@ function buildBootstrap(
   };
 }
 
+function buildMobileBootstrap(
+  env: DesktopEnv,
+  runnerBridge: RunnerBridge,
+  tunnelManager: TunnelManager,
+) {
+  const snapshot = runnerBridge.getSnapshot();
+  const publicUrls = getPublicUrls(env);
+  return mobileBootstrapOutputSchema.parse({
+    runner: snapshot.status,
+    pluto: snapshot.pluto,
+    plutoVoiceSessions: snapshot.plutoVoiceSessions,
+    desktop: {
+      runnerRunning: runnerBridge.isConnected,
+      tunnelRunning: tunnelManager.isRunning(),
+      publicAdminUrl: publicUrls.adminUrl,
+      publicMcpUrl: publicUrls.mcpUrl,
+    },
+  });
+}
+
 function getPublicUrls(env: DesktopEnv) {
   let adminUrl = env.DESKTOP_PUBLIC_BASE_URL ?? null;
   let mcpUrl: string | null = null;
@@ -528,6 +650,23 @@ function requireAdminSession(secret: string) {
     try {
       const session = await verifySession(req.cookies.agent_companion_session, secret);
       (req as Request & { session?: unknown }).session = session;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+function requireMobileAccess(mobileAuth: MobileAuthManager) {
+  return async (req: Request, _res: Response, next: express.NextFunction) => {
+    try {
+      const device = await mobileAuth.verifyAccessToken(
+        resolveMobileAccessToken({
+          headers: req.headers,
+          query: req.query as Record<string, unknown>,
+        }),
+      );
+      (req as Request & { mobileDevice?: unknown }).mobileDevice = device;
       next();
     } catch (error) {
       next(error);

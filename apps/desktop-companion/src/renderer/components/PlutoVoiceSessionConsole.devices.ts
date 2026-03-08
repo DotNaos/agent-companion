@@ -165,10 +165,20 @@ export async function applyOutputDeviceToAudioContext(
     const targetDeviceId = deviceId ?? 'default';
 
     if (contextWithSink.setSinkId) {
-        if (contextWithSink.sinkId !== targetDeviceId) {
-            await contextWithSink.setSinkId(targetDeviceId);
+        try {
+            if (contextWithSink.sinkId !== targetDeviceId) {
+                await contextWithSink.setSinkId(targetDeviceId);
+            }
+            return;
+        } catch {
+            if (!warningShownRef.current) {
+                warningShownRef.current = true;
+                onInfo(
+                    'Pluto could not open the selected playback device and will use the system default output instead.',
+                );
+            }
+            return;
         }
-        return;
     }
 
     if (deviceId && !warningShownRef.current) {
@@ -191,8 +201,18 @@ export async function applyOutputDeviceToAudioElement(
     const targetDeviceId = deviceId ?? 'default';
 
     if (audioWithSink.setSinkId) {
-        await audioWithSink.setSinkId(targetDeviceId);
-        return;
+        try {
+            await audioWithSink.setSinkId(targetDeviceId);
+            return;
+        } catch {
+            if (!warningShownRef.current) {
+                warningShownRef.current = true;
+                onInfo(
+                    'Pluto could not open the selected playback device and will use the system default output instead.',
+                );
+            }
+            return;
+        }
     }
 
     if (deviceId && !warningShownRef.current) {

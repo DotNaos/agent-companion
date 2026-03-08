@@ -577,6 +577,42 @@ describe("RunnerState", () => {
       status: "error",
     });
   });
+
+  it("persists Pluto voice session history across runner restarts", async () => {
+    const ctx = createContext();
+    const created = ctx.state.createPlutoVoiceSession({
+      title: "Persistent history",
+      client: {
+        label: "Desktop",
+        requestedRole: "speaker",
+      },
+    });
+
+    await expect(
+      ctx.state.sendPlutoVoiceSessionText(created.session.id, {
+        clientId: created.client!.id,
+        text: "Hallo Pluto",
+      }),
+    ).rejects.toMatchObject({ code: "PLUTO_VOICE_TEXT_SEND_FAILED" });
+
+    const beforeRestart = ctx.state.getPlutoVoiceSessionHistory(created.session.id, 20);
+    expect(beforeRestart.entries.map((entry) => entry.kind)).toEqual(["text_input", "stream_event"]);
+    expect(beforeRestart.entries[0]).toMatchObject({
+      kind: "text_input",
+      text: "Hallo Pluto",
+    });
+    expect(beforeRestart.entries[1]).toMatchObject({
+      kind: "stream_event",
+      event: {
+        type: "error",
+        code: "PLUTO_VOICE_TEXT_SEND_FAILED",
+      },
+    });
+
+    const restartedState = new RunnerState(ctx.env);
+    const afterRestart = restartedState.getPlutoVoiceSessionHistory(created.session.id, 20);
+    expect(afterRestart.entries).toEqual(beforeRestart.entries);
+  });
 });
 
 function createContext() {
@@ -596,6 +632,7 @@ function createContext() {
     TODO_STORE_PATH: path.join(dir, "todos.json"),
     ACTIVITY_LOG_PATH: path.join(dir, "activity.log"),
     PLUTO_AUDIO_DIR: path.join(dir, "pluto-audio"),
+    PLUTO_HISTORY_STORE_PATH: path.join(dir, "pluto-history.json"),
     DEFAULT_ADMIN_EMAIL: "admin@example.com",
     DEFAULT_ALLOWED_ORIGINS: "https://admin.example.com",
     DEFAULT_GOOGLE_CLIENT_IDS: "client-id",
