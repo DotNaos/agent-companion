@@ -682,25 +682,48 @@ export function App() {
                                                     const isSelectedSession =
                                                         session.id ===
                                                         activeVoiceSessionId;
+                                                    const isCurrentSpeaker =
+                                                        Boolean(knownClientId) &&
+                                                        session.speakerClientId ===
+                                                            knownClientId;
+                                                    const isSpeakerOccupiedByOtherClient =
+                                                        Boolean(
+                                                            session.speakerClientId &&
+                                                                session.speakerClientId !==
+                                                                    knownClientId,
+                                                        );
                                                     const sessionBusyKey =
                                                         plutoSessionActionPending ===
                                                             session.id ||
                                                         plutoSessionActionPending ===
+                                                            `${session.id}:speaker` ||
+                                                        plutoSessionActionPending ===
+                                                            `${session.id}:observer` ||
+                                                        plutoSessionActionPending ===
                                                             `${session.id}:close`;
-                                                    let joinButtonLabel =
-                                                        'Join as speaker';
-                                                    if (knownClientId) {
-                                                        joinButtonLabel =
-                                                            'Open console';
-                                                    } else if (sessionBusyKey) {
-                                                        joinButtonLabel =
-                                                            'Working…';
-                                                    } else if (
-                                                        session.speakerClientId
-                                                    ) {
-                                                        joinButtonLabel =
-                                                            'Join as observer';
-                                                    }
+                                                    const speakerButtonLabel =
+                                                        sessionBusyKey
+                                                            ? 'Working…'
+                                                            : isCurrentSpeaker
+                                                              ? 'You have the mic'
+                                                              : isSpeakerOccupiedByOtherClient
+                                                                ? 'Mic taken'
+                                                                : knownClientId
+                                                                  ? 'Take mic'
+                                                                  : 'Join with mic';
+                                                    const observerButtonLabel =
+                                                        sessionBusyKey
+                                                            ? 'Working…'
+                                                            : knownClientId
+                                                              ? 'Open controls'
+                                                              : 'Listen only';
+                                                    const roleHint = isCurrentSpeaker
+                                                        ? 'You are the active speaker in this session.'
+                                                        : isSpeakerOccupiedByOtherClient
+                                                          ? 'Another client has the mic right now. You can still open the controls to listen.'
+                                                          : knownClientId
+                                                            ? 'You are already attached. Hit “Take mic” to speak.'
+                                                            : 'No one owns the mic yet. You can join directly as speaker.';
 
                                                     return (
                                                         <div
@@ -746,6 +769,9 @@ export function App() {
                                                                             session.lastActivityAt,
                                                                         )}
                                                                     </div>
+                                                                    <div className="max-w-md text-xs text-slate-500">
+                                                                        {roleHint}
+                                                                    </div>
                                                                 </div>
 
                                                                 <div className="flex flex-wrap gap-2">
@@ -753,15 +779,45 @@ export function App() {
                                                                         variant="secondary"
                                                                         size="sm"
                                                                         onClick={() =>
-                                                                            void joinPlutoVoiceSession(
-                                                                                session,
-                                                                            )
+                                                                            knownClientId
+                                                                                ? void joinPlutoVoiceSession(
+                                                                                      session,
+                                                                                  )
+                                                                                : void joinPlutoVoiceSessionAs(
+                                                                                      session,
+                                                                                      'observer',
+                                                                                  )
                                                                         }
                                                                         disabled={
                                                                             sessionBusyKey
                                                                         }>
                                                                         {
-                                                                            joinButtonLabel
+                                                                            observerButtonLabel
+                                                                        }
+                                                                    </Button>
+                                                                    <Button
+                                                                        variant={
+                                                                            isCurrentSpeaker
+                                                                                ? 'outline'
+                                                                                : 'default'
+                                                                        }
+                                                                        size="sm"
+                                                                        onClick={() =>
+                                                                            isCurrentSpeaker
+                                                                                ? void joinPlutoVoiceSession(
+                                                                                      session,
+                                                                                  )
+                                                                                : void joinPlutoVoiceSessionAs(
+                                                                                      session,
+                                                                                      'speaker',
+                                                                                  )
+                                                                        }
+                                                                        disabled={
+                                                                            sessionBusyKey ||
+                                                                            isSpeakerOccupiedByOtherClient
+                                                                        }>
+                                                                        {
+                                                                            speakerButtonLabel
                                                                         }
                                                                     </Button>
                                                                     <Button
@@ -789,20 +845,31 @@ export function App() {
                                     {activeVoiceSessionId ? (
                                         <div className="mt-4">
                                             <div className="mb-3 rounded-2xl border border-dashed border-white/10 bg-black/20 p-3 text-xs text-slate-400">
-                                                Pluto stays talkable beside the avatar in the overlay — and the same controls are mirrored here so device setup and mic testing are easier to find.
+                                                Pluto stays talkable beside the
+                                                avatar in the overlay — and the
+                                                same controls are mirrored here
+                                                so device setup and mic testing
+                                                are easier to find.
                                             </div>
                                             <PlutoVoiceSessionConsole
                                                 apiBase={apiBase}
                                                 desktopToken={desktopToken}
                                                 sessionId={activeVoiceSessionId}
-                                                clientId={activeVoiceSessionClientId}
+                                                clientId={
+                                                    activeVoiceSessionClientId
+                                                }
                                                 sessions={plutoVoiceSessions}
                                                 variant="panel"
-                                                onError={(message) => setError(message)}
+                                                onError={(message) =>
+                                                    setError(message)
+                                                }
                                                 onInfo={(message) => {
                                                     setStatusMessage(message);
                                                     globalThis.setTimeout(
-                                                        () => setStatusMessage(null),
+                                                        () =>
+                                                            setStatusMessage(
+                                                                null,
+                                                            ),
                                                         2500,
                                                     );
                                                 }}
@@ -810,7 +877,10 @@ export function App() {
                                         </div>
                                     ) : (
                                         <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-black/20 p-3 text-xs text-slate-400">
-                                            Pick a Pluto session to reveal the full voice setup, microphone test, and live talk controls here and beside Pluto in the overlay.
+                                            Pick a Pluto session to reveal the
+                                            full voice setup, microphone test,
+                                            and live talk controls here and
+                                            beside Pluto in the overlay.
                                         </div>
                                     )}
                                 </div>
@@ -1508,6 +1578,61 @@ export function App() {
                 requestError instanceof Error
                     ? requestError.message
                     : 'Pluto voice session join failed',
+            );
+        } finally {
+            setPlutoSessionActionPending(null);
+        }
+    }
+
+    async function joinPlutoVoiceSessionAs(
+        session: PlutoVoiceSessionSummary,
+        requestedRole: 'speaker' | 'observer',
+    ) {
+        const existingClientId = localSessionClients[session.id] ?? null;
+
+        try {
+            setPlutoSessionActionPending(`${session.id}:${requestedRole}`);
+
+            if (existingClientId) {
+                await apiRequest(
+                    `/pluto/sessions/${session.id}/detach`,
+                    'POST',
+                    { clientId: existingClientId },
+                );
+                setLocalSessionClients((current) => {
+                    const next = { ...current };
+                    delete next[session.id];
+                    return next;
+                });
+            }
+
+            const result = await apiRequest<PlutoVoiceSessionAttachOutput>(
+                `/pluto/sessions/${session.id}/attach`,
+                'POST',
+                {
+                    label:
+                        mode === 'admin' ? 'Remote Admin' : 'Desktop Companion',
+                    platform: desktopBridge?.platform ?? mode,
+                    requestedRole,
+                },
+            );
+            setLocalSessionClients((current) => ({
+                ...current,
+                [result.session.id]: result.client.id,
+            }));
+            setActiveVoiceSessionId(result.session.id);
+            await fetchBootstrap();
+            setStatusMessage(
+                requestedRole === 'speaker'
+                    ? 'You now have the mic for this Pluto session.'
+                    : 'Opened Pluto session in listen-only mode.',
+            );
+            setTimeout(() => setStatusMessage(null), 2500);
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error
+                    ? requestError.message
+                    : 'Pluto voice role change failed',
             );
         } finally {
             setPlutoSessionActionPending(null);

@@ -98,6 +98,13 @@ export function PlutoVoiceSessionConsole({
         globalThis.navigator?.mediaDevices?.enumerateDevices,
     );
     const canRouteOutputDevice = supportsOutputDeviceSelection();
+    const roleStatus = getRoleStatus({
+        isSpeaker,
+        hasClient: Boolean(clientId),
+        hasSession: Boolean(sessionId),
+        hasSpeaker: Boolean(activeSession?.speakerClientId),
+        isOverlay,
+    });
     const inputDeviceHint = getInputDeviceHint({
         canEnumerateDevices,
         availableInputs,
@@ -545,9 +552,11 @@ export function PlutoVoiceSessionConsole({
 
         const AudioContextCtor =
             globalThis.AudioContext ??
-            (globalThis as typeof globalThis & {
-                webkitAudioContext?: typeof AudioContext;
-            }).webkitAudioContext;
+            (
+                globalThis as typeof globalThis & {
+                    webkitAudioContext?: typeof AudioContext;
+                }
+            ).webkitAudioContext;
 
         if (!AudioContextCtor) {
             return;
@@ -574,7 +583,10 @@ export function PlutoVoiceSessionConsole({
                     deviation += Math.abs(sample - 128);
                 }
 
-                const normalized = Math.min(1, deviation / (samples.length * 24));
+                const normalized = Math.min(
+                    1,
+                    deviation / (samples.length * 24),
+                );
                 setMicLevel(normalized);
                 micMonitorAnimationFrameRef.current =
                     globalThis.requestAnimationFrame(pumpLevel);
@@ -589,7 +601,9 @@ export function PlutoVoiceSessionConsole({
 
     function stopMicMonitor() {
         if (micMonitorAnimationFrameRef.current !== null) {
-            globalThis.cancelAnimationFrame(micMonitorAnimationFrameRef.current);
+            globalThis.cancelAnimationFrame(
+                micMonitorAnimationFrameRef.current,
+            );
             micMonitorAnimationFrameRef.current = null;
         }
 
@@ -694,6 +708,17 @@ export function PlutoVoiceSessionConsole({
                 <span className="text-xs text-slate-400">{recordingHint}</span>
             </div>
 
+            {roleStatus ? (
+                <div
+                    className={
+                        roleStatus.tone === 'accent'
+                            ? 'mt-3 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-xs text-cyan-100'
+                            : 'mt-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100'
+                    }>
+                    {roleStatus.message}
+                </div>
+            ) : null}
+
             {isRecording ? (
                 <div className="mt-3 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-3">
                     <div className="flex items-center justify-between gap-3">
@@ -756,7 +781,7 @@ export function PlutoVoiceSessionConsole({
                 className={
                     isOverlay
                         ? 'mt-1 grid gap-3'
-                        : 'mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_16rem]'
+                        : 'mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]'
                 }>
                 <ScrollArea
                     className={
@@ -984,6 +1009,48 @@ function getDescriptionText(hasSession: boolean, isOverlay: boolean) {
         : 'Start or join a session to open the live Pluto console.';
 }
 
+function getRoleStatus({
+    isSpeaker,
+    hasClient,
+    hasSession,
+    hasSpeaker,
+    isOverlay,
+}: Readonly<{
+    isSpeaker: boolean;
+    hasClient: boolean;
+    hasSession: boolean;
+    hasSpeaker: boolean;
+    isOverlay: boolean;
+}>) {
+    if (!hasSession) {
+        return null;
+    }
+    if (isSpeaker) {
+        return {
+            tone: 'accent' as const,
+            message: 'You have the mic. Hit Record, speak, then tap again to send your turn to Pluto.',
+        };
+    }
+    if (hasSpeaker) {
+        return {
+            tone: 'neutral' as const,
+            message: isOverlay
+                ? 'You are listening only right now. Open the dashboard and use “Take mic” when the current speaker is done.'
+                : 'You are listening only right now. Use the “Take mic” button in the session card when the mic becomes free.',
+        };
+    }
+    if (hasClient) {
+        return {
+            tone: 'accent' as const,
+            message: 'The mic is free. Use “Take mic” in the session card above to become the speaker.',
+        };
+    }
+    return {
+        tone: 'neutral' as const,
+        message: 'Join the session first, then choose whether you want to listen or take the mic.',
+    };
+}
+
 function getRoleLabel(isSpeaker: boolean, hasClient: boolean) {
     if (isSpeaker) {
         return 'Speaker';
@@ -1099,7 +1166,9 @@ function MicLevelMeter({ level }: Readonly<{ level: number }>) {
                 return (
                     <span
                         key={threshold}
-                        className={active ? 'bg-emerald-300' : 'bg-emerald-900/60'}
+                        className={
+                            active ? 'bg-emerald-300' : 'bg-emerald-900/60'
+                        }
                         style={{
                             width: '0.35rem',
                             height: `${0.55 + index * 0.3}rem`,
