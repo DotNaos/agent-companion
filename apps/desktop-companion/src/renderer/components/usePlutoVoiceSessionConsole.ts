@@ -72,7 +72,9 @@ export function usePlutoVoiceSessionConsole({
     const socketRef = useRef<WebSocket | null>(null);
     const audioCaptureRef = useRef<PlutoAudioCapture | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
-    const micMonitorAnimationFrameRef = useRef<number | null>(null);
+    const micMonitorTimerRef = useRef<ReturnType<
+        typeof globalThis.setTimeout
+    > | null>(null);
     const micMonitorContextRef = useRef<AudioContext | null>(null);
     const micMonitorSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const panelScrollAreaRef = useRef<HTMLDivElement | null>(null);
@@ -467,23 +469,23 @@ export function usePlutoVoiceSessionConsole({
                     lastMicLevelCommitAtRef.current = now;
                     setMicLevel(normalized);
                 }
-                micMonitorAnimationFrameRef.current =
-                    globalThis.requestAnimationFrame(pumpLevel);
+
+                micMonitorTimerRef.current = globalThis.setTimeout(
+                    pumpLevel,
+                    MIC_LEVEL_UPDATE_INTERVAL_MS,
+                );
             };
 
-            micMonitorAnimationFrameRef.current =
-                globalThis.requestAnimationFrame(pumpLevel);
+            pumpLevel();
         } catch {
             setMicLevel(0);
         }
     }
 
     function stopMicMonitor() {
-        if (micMonitorAnimationFrameRef.current !== null) {
-            globalThis.cancelAnimationFrame(
-                micMonitorAnimationFrameRef.current,
-            );
-            micMonitorAnimationFrameRef.current = null;
+        if (micMonitorTimerRef.current !== null) {
+            globalThis.clearTimeout(micMonitorTimerRef.current);
+            micMonitorTimerRef.current = null;
         }
 
         micMonitorSourceRef.current?.disconnect();

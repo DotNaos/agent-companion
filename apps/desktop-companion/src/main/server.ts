@@ -559,6 +559,22 @@ function ensureOriginAllowed(req: { headers: http.IncomingHttpHeaders }, runnerB
 
 function renderAppShell(env: DesktopEnv, mode: "desktop" | "overlay" | "admin" | "login") {
   return (_req: Request, res: Response) => {
+    const csp = [
+      "default-src 'self' http://127.0.0.1:5173 ws://127.0.0.1:5173",
+      "script-src 'self' 'unsafe-inline' http://127.0.0.1:5173",
+      "style-src 'self' 'unsafe-inline' http://127.0.0.1:5173",
+      "img-src 'self' data: blob: http://127.0.0.1:5173",
+      "font-src 'self' data: http://127.0.0.1:5173",
+      "connect-src 'self' ws: wss: http://127.0.0.1:5173 http://127.0.0.1:4318",
+      "media-src 'self' blob: data:",
+      "worker-src 'self' blob:",
+      "frame-src 'none'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; ');
+    res.setHeader("Content-Security-Policy", csp);
+
     if (env.VITE_DEV_SERVER_URL) {
       res.type("html").send(`<!doctype html>
 <html lang="en" data-mode="${mode}">

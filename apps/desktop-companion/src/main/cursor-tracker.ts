@@ -10,6 +10,7 @@ export interface CursorSnapshot {
 
 export class CursorTracker extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
+  private running = false;
   private snapshot: CursorSnapshot = {
     x: 0,
     y: 0,
@@ -22,18 +23,19 @@ export class CursorTracker extends EventEmitter {
   }
 
   start() {
-    if (this.timer) {
+    if (this.running) {
       return;
     }
-    this.tick();
-    this.timer = setInterval(() => this.tick(), 16);
+    this.running = true;
+    this.scheduleNextTick(0);
   }
 
   stop() {
+    this.running = false;
     if (!this.timer) {
       return;
     }
-    clearInterval(this.timer);
+    clearTimeout(this.timer);
     this.timer = null;
   }
 
@@ -44,6 +46,7 @@ export class CursorTracker extends EventEmitter {
   private tick() {
     const bounds = this.getOverlayBounds();
     if (!bounds) {
+      this.scheduleNextTick(250);
       return;
     }
 
@@ -88,9 +91,22 @@ export class CursorTracker extends EventEmitter {
     } else {
       this.snapshot = next;
     }
-  }
-}
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
+    this.scheduleNextTick(next.near ? 33 : 80);
+  }
+
+  private scheduleNextTick(delayMs: number) {
+    if (!this.running) {
+      return;
+    }
+
+    if (this.timer) {
+      clearTimeout(this.timer);
+    }
+
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.tick();
+    }, delayMs);
+  }
 }

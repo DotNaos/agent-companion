@@ -1,6 +1,6 @@
 import { RoundedBox, Sphere } from '@react-three/drei';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { useRef } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 
 export const plutoAudioState = {
@@ -34,6 +34,9 @@ interface PlutoAvatarProps {
     phase: number;
     blink: number;
 }
+
+const ACTIVE_AVATAR_FPS = 20;
+const IDLE_AVATAR_FPS = 6;
 
 function PlutoScene({
     avatarState,
@@ -255,6 +258,39 @@ function PlutoScene({
 }
 
 export function PlutoAvatar(props: PlutoAvatarProps) {
+    const animationActive =
+        props.isSpeaking ||
+        props.isProcessing ||
+        props.curious ||
+        props.cursor.near ||
+        props.avatarState === 'working' ||
+        props.avatarState === 'alert';
+    const animationKey = useMemo(
+        () =>
+            [
+                props.avatarState,
+                props.cursor.x.toFixed(2),
+                props.cursor.y.toFixed(2),
+                props.cursor.near ? 'near' : 'far',
+                props.isProcessing ? 'busy' : 'idle',
+                props.isSpeaking ? 'talking' : 'silent',
+                props.curious ? 'curious' : 'calm',
+                props.blink.toFixed(2),
+                Math.round(props.phase),
+            ].join(':'),
+        [
+            props.avatarState,
+            props.blink,
+            props.curious,
+            props.cursor.near,
+            props.cursor.x,
+            props.cursor.y,
+            props.isProcessing,
+            props.isSpeaking,
+            props.phase,
+        ],
+    );
+
     return (
         <div
             style={{
@@ -264,7 +300,16 @@ export function PlutoAvatar(props: PlutoAvatarProps) {
                 pointerEvents: 'none',
             }}
             className="pet-canvas">
-            <Canvas camera={{ position: [0, 0, 5], fov: 50 }}>
+            <Canvas
+                frameloop="demand"
+                camera={{ position: [0, 0, 5], fov: 50 }}
+                dpr={[1, 1.25]}
+                gl={{ antialias: false, powerPreference: 'low-power' }}>
+                <PlutoFrameDriver
+                    active={animationActive}
+                    fps={animationActive ? ACTIVE_AVATAR_FPS : IDLE_AVATAR_FPS}
+                    animationKey={animationKey}
+                />
                 <ambientLight intensity={0.7} />
                 <directionalLight position={[5, 5, 5]} intensity={1.2} />
                 <directionalLight position={[-5, 5, 2]} intensity={0.5} />
@@ -272,4 +317,50 @@ export function PlutoAvatar(props: PlutoAvatarProps) {
             </Canvas>
         </div>
     );
+}
+
+function PlutoFrameDriver({
+    active,
+    fps,
+    animationKey,
+}: Readonly<{
+    active: boolean;
+    fps: number;
+    animationKey: string;
+}>) {
+    const invalidate = useThree((state) => state.invalidate);
+
+    useEffect(() => {
+        invalidate();
+    }, [animationKey, invalidate]);
+
+    useEffect(() => {
+        if (!active) {
+            return undefined;
+        }
+
+        let timeout: ReturnType<typeof globalThis.setTimeout> | null = null;
+        let cancelled = false;
+        const frameDelay = Math.max(16, Math.round(1000 / fps));
+
+        const tick = () => {
+            if (cancelled) {
+                return;
+            }
+
+            invalidate();
+            timeout = globalThis.setTimeout(tick, frameDelay);
+        };
+
+        tick();
+
+        return () => {
+            cancelled = true;
+            if (timeout !== null) {
+                globalThis.clearTimeout(timeout);
+            }
+        };
+    }, [active, fps, invalidate]);
+
+    return null;
 }

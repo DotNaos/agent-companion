@@ -28,6 +28,9 @@ type AudioGlobal = typeof globalThis & {
     _plutoAnalyser?: AnalyserNode;
 };
 
+const ACTIVE_OVERLAY_FRAME_INTERVAL_MS = 80;
+const IDLE_OVERLAY_FRAME_INTERVAL_MS = 350;
+
 export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
     const [voiceSelection, setVoiceSelection] = useState<PlutoVoiceSelection>(
         () => readPlutoVoiceSelection(),
@@ -101,13 +104,22 @@ export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
         ? activePlutoMessage.text.slice(0, Math.max(0, streamProgressChars))
         : '';
 
+    const shouldAnimateOverlayFrame =
+        Boolean(activePlutoMessage) ||
+        isSpeaking ||
+        isProcessing ||
+        approvalCount > 0 ||
+        cursor.near;
+
     useEffect(() => {
-        const intervalId = globalThis.setInterval(
-            () => setFrameTime(Date.now()),
-            80,
-        );
+        const intervalMs = shouldAnimateOverlayFrame
+            ? ACTIVE_OVERLAY_FRAME_INTERVAL_MS
+            : IDLE_OVERLAY_FRAME_INTERVAL_MS;
+        const intervalId = globalThis.setInterval(() => {
+            setFrameTime(Date.now());
+        }, intervalMs);
         return () => globalThis.clearInterval(intervalId);
-    }, []);
+    }, [shouldAnimateOverlayFrame]);
 
     useEffect(() => {
         if (
