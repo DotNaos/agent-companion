@@ -160,6 +160,35 @@ describe('voice transcript streaming', () => {
         );
     });
 
+    it('merges delayed Pluto continuation chunks when the previous text is unfinished', () => {
+        const started = appendVoiceTimelineEntry(
+            [],
+            {
+                actor: 'pluto',
+                label: 'Pluto',
+                text: 'Ich kann dir bei der Planung helfen. Gibt',
+                tone: 'neutral',
+            },
+            '2026-03-08T18:23:52.000Z',
+        );
+
+        const updated = appendVoiceTimelineEntry(
+            started,
+            {
+                actor: 'pluto',
+                label: 'Pluto',
+                text: 'es einen bestimmten Bereich, in dem du Hilfe benötigst?',
+                tone: 'neutral',
+            },
+            '2026-03-08T18:23:55.000Z',
+        );
+
+        expect(updated).toHaveLength(1);
+        expect(updated[0]?.text).toBe(
+            'Ich kann dir bei der Planung helfen. Gibt es einen bestimmten Bereich, in dem du Hilfe benötigst?',
+        );
+    });
+
     it('does not merge system notices into one bubble stream', () => {
         expect(
             shouldMergeVoiceTimelineEntry(

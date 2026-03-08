@@ -106,6 +106,7 @@ export function PlutoVoiceSessionConsole({
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const scheduledPlaybackTimeRef = useRef(0);
     const playbackSourcesRef = useRef(0);
+    const pcmSourcesRef = useRef(new Set<AudioBufferSourceNode>());
     const fallbackAudioRef = useRef<HTMLAudioElement | null>(null);
     const outputRoutingWarningShownRef = useRef(false);
     const micMonitorAnimationFrameRef = useRef<number | null>(null);
@@ -397,9 +398,33 @@ export function PlutoVoiceSessionConsole({
             publishError,
             setSession,
             setStreamState,
+            stopPlayback,
             streamTerminalEventRef,
         });
     };
+
+    function stopPlayback() {
+        scheduledPlaybackTimeRef.current = 0;
+        playbackSourcesRef.current = 0;
+
+        for (const source of pcmSourcesRef.current) {
+            try {
+                source.stop();
+            } catch {
+                // Ignore already-stopped sources.
+            }
+            source.disconnect();
+        }
+        pcmSourcesRef.current.clear();
+
+        if (fallbackAudioRef.current) {
+            fallbackAudioRef.current.pause();
+            fallbackAudioRef.current.currentTime = 0;
+        }
+
+        setIsPlaying(false);
+        resetPlutoSpeakingState();
+    }
 
     async function sendAudioChunk(
         currentClientId: string,
@@ -526,6 +551,7 @@ export function PlutoVoiceSessionConsole({
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(ctx.destination);
+        pcmSourcesRef.current.add(source);
 
         const startAt = Math.max(
             ctx.currentTime,
@@ -537,6 +563,7 @@ export function PlutoVoiceSessionConsole({
         setPlutoSpeakingState(true, Math.min(1, amplitudeSum / frameCount));
 
         source.addEventListener('ended', () => {
+            pcmSourcesRef.current.delete(source);
             playbackSourcesRef.current = Math.max(
                 0,
                 playbackSourcesRef.current - 1,
@@ -570,6 +597,7 @@ export function PlutoVoiceSessionConsole({
         audio.addEventListener('ended', () => {
             setIsPlaying(false);
             resetPlutoSpeakingState();
+            scheduledPlaybackTimeRef.current = 0;
             URL.revokeObjectURL(objectUrl);
         });
         await audio.play().catch(() => undefined);
@@ -1058,6 +1086,7 @@ function handlePlutoStreamEvent({
     publishError,
     setSession,
     setStreamState,
+    stopPlayback,
     streamTerminalEventRef,
 }: Readonly<{
     event: PlutoVoiceSessionStreamEvent;
@@ -1069,6 +1098,7 @@ function handlePlutoStreamEvent({
     publishError: (message: string) => void;
     setSession: Dispatch<SetStateAction<PlutoVoiceSession | null>>;
     setStreamState: Dispatch<SetStateAction<StreamState>>;
+    stopPlayback: () => void;
     streamTerminalEventRef: { current: 'error' | 'closed' | null };
 }>) {
     switch (event.type) {
@@ -1096,6 +1126,9 @@ function handlePlutoStreamEvent({
             void playIncomingAudioChunk(event.audioBase64, event.mimeType);
             return;
         case 'status':
+            if (event.interrupted) {
+                stopPlayback();
+            }
             appendTimelineEntry({
                 actor: 'system',
                 label: 'Status',
@@ -1113,6 +1146,7 @@ function handlePlutoStreamEvent({
             return;
         case 'error':
             streamTerminalEventRef.current = 'error';
+            stopPlayback();
             appendTimelineEntry({
                 actor: 'system',
                 label: 'Error',
@@ -1123,6 +1157,7 @@ function handlePlutoStreamEvent({
             return;
         case 'closed':
             streamTerminalEventRef.current = 'closed';
+            stopPlayback();
             appendTimelineEntry({
                 actor: 'system',
                 label: 'Closed',
@@ -1608,10 +1643,23 @@ export function shouldMergeVoiceTimelineEntry(
     return (
         nextText.startsWith(previousText) ||
         previousText.startsWith(nextText) ||
+        isLikelyTranscriptContinuation(previousText, nextText) ||
         withinStreamingWindow ||
         longestCommonPrefixLength(previousText, nextText) >=
             Math.min(previousText.length, nextText.length) * 0.7
     );
+}
+
+function isLikelyTranscriptContinuation(previousText: string, nextText: string) {
+    if (!previousText || !nextText) {
+        return false;
+    }
+
+    if (/[.!?…]["')\]]?$/.test(previousText)) {
+        return false;
+    }
+
+    return /^[a-zäöüß,(]/.test(nextText);
 }
 
 export function mergeVoiceTimelineText(previousText: string, nextText: string) {
