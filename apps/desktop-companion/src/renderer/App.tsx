@@ -20,7 +20,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PlutoAvatar, plutoAudioState } from "./components/PlutoAvatar.js";
 import { PlutoVoiceSessionConsole } from "./components/PlutoVoiceSessionConsole.js";
 import { Switch } from "./components/ui/switch.js";
@@ -156,6 +156,14 @@ export function App() {
   const activeVoiceSessionClientId = activeVoiceSessionId
     ? (localSessionClients[activeVoiceSessionId] ?? null)
     : null;
+
+  const handleVoiceError = useCallback((message: string) => {
+    setError(message);
+  }, []);
+  const handleVoiceInfo = useCallback((message: string) => {
+    setStatusMessage(message);
+    globalThis.setTimeout(() => setStatusMessage(null), 2500);
+  }, []);
 
   function replaceDraftConfig(nextConfig: AgentCompanionConfig | null) {
     draftDirtyRef.current = false;
@@ -368,7 +376,7 @@ export function App() {
         </div>
       </header>
 
-      <main className="container mx-auto max-w-5xl py-8 px-4 grid gap-8">
+      <main className="container mx-auto max-w-5xl py-8 px-4 grid gap-8 overflow-x-hidden min-w-0">
         {error && (
           <div className="rounded-3xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
             {error}
@@ -823,14 +831,8 @@ export function App() {
                         clientId={activeVoiceSessionClientId}
                         sessions={plutoVoiceSessions}
                         variant="panel"
-                        onError={(message) => setError(message)}
-                        onInfo={(message) => {
-                          setStatusMessage(message);
-                          globalThis.setTimeout(
-                            () => setStatusMessage(null),
-                            2500,
-                          );
-                        }}
+                        onError={handleVoiceError}
+                        onInfo={handleVoiceInfo}
                       />
                     </div>
                   ) : null}
