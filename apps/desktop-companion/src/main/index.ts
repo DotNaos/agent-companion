@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, systemPreferences, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { inspect } from "node:util";
 import { CursorTracker } from "./cursor-tracker.js";
 import { loadDesktopEnv } from "./env.js";
 import { logger } from "./logger.js";
+import { shouldAllowMediaPermission } from "./media-permissions.js";
 import { shouldOverlayIgnoreMouseEvents } from "./overlay-hit-test.js";
 import { PlutoOrchestrator } from "./pluto-orchestrator.js";
 import { RunnerBridge } from "./runner-bridge.js";
@@ -145,6 +146,8 @@ async function bootstrap() {
     debugLog("boot:macos-activation-policy-set");
   }
 
+  await configureMediaPermissions();
+
   await runnerBridge.connect();
   debugLog("boot:runner-connected", runnerBridge.getSnapshot().status);
   plutoOrchestrator.start();
@@ -165,6 +168,81 @@ function handleBootstrapError(error: unknown) {
   });
   app.quit();
 
+}
+
+async function configureMediaPermissions() {
+  const defaultSession = session.defaultSession;
+
+  defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
+    const mediaTypes = details.mediaType && details.mediaType !== "unknown"
+      ? [details.mediaType]
+      : undefined;
+    const allowed = shouldAllowMediaPermission(permission, {
+      mediaTypes,
+      requestingUrl: requestingOrigin,
+    });
+
+    if (permission === "media") {
+      debugLog("permissions:check", {
+        permission,
+        requestingOrigin,
+        mediaTypes,
+        allowed,
+      });
+    }
+
+    return allowed;
+  });
+
+  defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const requestingUrl = details.requestingUrl || webContents.getURL();
+    const mediaTypes = getRequestedMediaTypes(details);
+    const allowed = shouldAllowMediaPermission(permission, {
+      mediaTypes,
+      requestingUrl,
+    });
+
+    debugLog("permissions:request", {
+      permission,
+      requestingUrl,
+      mediaTypes,
+      allowed,
+    });
+
+    callback(allowed);
+  });
+
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const currentStatus = systemPreferences.getMediaAccessStatus("microphone");
+  debugLog("permissions:microphone-status", { status: currentStatus });
+
+  if (currentStatus === "not-determined") {
+    const granted = await systemPreferences.askForMediaAccess("microphone");
+    debugLog("permissions:microphone-requested", { granted });
+    return;
+  }
+
+  if (currentStatus !== "granted") {
+    errorLog("permissions:microphone-unavailable", { status: currentStatus });
+  }
+}
+
+function getRequestedMediaTypes(details: unknown) {
+  if (
+    typeof details === "object" &&
+    details !== null &&
+    "mediaTypes" in details &&
+    Array.isArray(details.mediaTypes)
+  ) {
+    return details.mediaTypes.filter(
+      (entry): entry is "audio" | "video" => entry === "audio" || entry === "video",
+    );
+  }
+
+  return undefined;
 }
 
 function attachRendererLogging(window: BrowserWindow, label: string) {

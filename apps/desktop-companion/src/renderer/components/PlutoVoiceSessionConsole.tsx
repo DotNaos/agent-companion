@@ -13,11 +13,11 @@ import {
     useRef,
     useState,
 } from 'react';
+import { parseJsonWebSocketData } from '../websocket.js';
 import { plutoAudioState } from './PlutoAvatar.js';
 import { Badge } from './ui/badge.js';
 import { Button } from './ui/button.js';
 import { ScrollArea } from './ui/scroll-area.js';
-import { parseJsonWebSocketData } from '../websocket.js';
 
 type VoiceTimelineEntry = {
     id: string;
@@ -28,6 +28,9 @@ type VoiceTimelineEntry = {
 };
 
 type StreamState = 'idle' | 'connecting' | 'connected' | 'closed';
+type PlutoAudioCapture = {
+    stop: () => void;
+};
 
 type Props = Readonly<{
     apiBase: string;
@@ -79,7 +82,7 @@ export function PlutoVoiceSessionConsole({
     );
     const [isTakingMic, setIsTakingMic] = useState(false);
     const socketRef = useRef<WebSocket | null>(null);
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const audioCaptureRef = useRef<PlutoAudioCapture | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const scheduledPlaybackTimeRef = useRef(0);
     const playbackSourcesRef = useRef(0);
@@ -289,7 +292,7 @@ export function PlutoVoiceSessionConsole({
     }, [selectedSummary, sessionId]);
 
     const stopRecording = () => {
-        stopPlutoRecording(mediaRecorderRef, appendTimelineEntry);
+        stopPlutoRecording(audioCaptureRef, appendTimelineEntry);
     };
 
     const toggleRecording = async () => {
@@ -299,7 +302,7 @@ export function PlutoVoiceSessionConsole({
             clientId,
             isRecording,
             isSpeaker,
-            mediaRecorderRef,
+            audioCaptureRef,
             mediaStreamRef,
             publishError,
             publishInfo,
@@ -475,11 +478,10 @@ export function PlutoVoiceSessionConsole({
     }
 
     function cleanupAudioCapture() {
-        const recorder = mediaRecorderRef.current;
-        if (recorder && recorder.state !== 'inactive') {
-            recorder.stop();
+        const capture = audioCaptureRef.current;
+        if (capture) {
+            capture.stop();
         }
-        mediaRecorderRef.current = null;
         stopMicMonitor();
         stopMediaStream();
         setIsRecording(false);
@@ -794,18 +796,27 @@ function describeStatusEvent(
     return 'Pluto is idle.';
 }
 
-function pickRecordingMimeType() {
-    if (typeof MediaRecorder === 'undefined') {
-        return '';
+export function getPlutoPcmMimeType(sampleRate: number) {
+    return `audio/pcm;rate=${sampleRate}`;
+}
+
+export function encodePcm16Chunk(samples: Float32Array) {
+    const buffer = new ArrayBuffer(samples.length * 2);
+    const view = new DataView(buffer);
+
+    for (let index = 0; index < samples.length; index += 1) {
+        const sample = Math.max(-1, Math.min(1, samples[index] ?? 0));
+        const normalized = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+        view.setInt16(index * 2, Math.round(normalized), true);
     }
 
-    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+    return buffer;
+}
 
-    return (
-        candidates.find((candidate) =>
-            MediaRecorder.isTypeSupported(candidate),
-        ) ?? ''
-    );
+export function createPcmChunkBlob(samples: Float32Array, sampleRate: number) {
+    return new Blob([encodePcm16Chunk(samples)], {
+        type: getPlutoPcmMimeType(sampleRate),
+    });
 }
 
 async function blobToBase64(blob: Blob) {
@@ -922,7 +933,7 @@ async function togglePlutoRecording({
     clientId,
     isRecording,
     isSpeaker,
-    mediaRecorderRef,
+    audioCaptureRef,
     mediaStreamRef,
     publishError,
     publishInfo,
@@ -943,7 +954,7 @@ async function togglePlutoRecording({
     clientId: string | null;
     isRecording: boolean;
     isSpeaker: boolean | null | undefined;
-    mediaRecorderRef: { current: MediaRecorder | null };
+    audioCaptureRef: { current: PlutoAudioCapture | null };
     mediaStreamRef: { current: MediaStream | null };
     publishError: (message: string) => void;
     publishInfo: (message: string) => void;
@@ -986,6 +997,21 @@ async function togglePlutoRecording({
     }
 
     try {
+        const AudioContextCtor =
+            globalThis.AudioContext ??
+            (
+                globalThis as typeof globalThis & {
+                    webkitAudioContext?: typeof AudioContext;
+                }
+            ).webkitAudioContext;
+
+        if (!AudioContextCtor) {
+            publishError(
+                'This browser environment does not expose raw audio capture.',
+            );
+            return;
+        }
+
         const audioConstraints = selectedInputId
             ? { deviceId: { exact: selectedInputId } }
             : true;
@@ -995,23 +1021,31 @@ async function togglePlutoRecording({
         mediaStreamRef.current = stream;
         void refreshAudioDevices();
         void startMicMonitor(stream);
-        const mimeType = pickRecordingMimeType();
-        const recorder = mimeType
-            ? new MediaRecorder(stream, { mimeType })
-            : new MediaRecorder(stream);
-        mediaRecorderRef.current = recorder;
 
-        recorder.addEventListener('dataavailable', (event) => {
-            if (event.data.size === 0 || !clientId) {
+        const audioContext = new AudioContextCtor();
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
+
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        const mimeType = getPlutoPcmMimeType(audioContext.sampleRate);
+        let stopped = false;
+
+        const stopCapture = () => {
+            if (stopped) {
                 return;
             }
-            void sendAudioChunk(clientId, event.data, recorder.mimeType);
-        });
 
-        recorder.addEventListener('stop', () => {
+            stopped = true;
+            processor.onaudioprocess = null;
+            processor.disconnect();
+            source.disconnect();
+            audioCaptureRef.current = null;
             setIsRecording(false);
-            mediaRecorderRef.current = null;
             stopMediaStream();
+            void audioContext.close().catch(() => undefined);
+
             if (socketRef.current?.readyState === WebSocket.OPEN) {
                 socketRef.current.send(
                     JSON.stringify({
@@ -1020,9 +1054,29 @@ async function togglePlutoRecording({
                     }),
                 );
             }
-        });
+        };
 
-        recorder.start(250);
+        processor.onaudioprocess = (event) => {
+            if (stopped || !clientId) {
+                return;
+            }
+
+            const input = event.inputBuffer.getChannelData(0);
+            if (input.length === 0) {
+                return;
+            }
+
+            const chunk = createPcmChunkBlob(
+                new Float32Array(input),
+                audioContext.sampleRate,
+            );
+            void sendAudioChunk(clientId, chunk, mimeType);
+        };
+
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+        audioCaptureRef.current = { stop: stopCapture };
+
         setIsRecording(true);
         appendTimelineEntry({
             label: 'Mic',
@@ -1043,16 +1097,16 @@ async function togglePlutoRecording({
 }
 
 function stopPlutoRecording(
-    mediaRecorderRef: { current: MediaRecorder | null },
+    audioCaptureRef: { current: PlutoAudioCapture | null },
     appendTimelineEntry: (
         entry: Omit<VoiceTimelineEntry, 'id' | 'createdAt'>,
     ) => void,
 ) {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === 'inactive') {
+    const capture = audioCaptureRef.current;
+    if (!capture) {
         return;
     }
-    recorder.stop();
+    capture.stop();
     appendTimelineEntry({
         label: 'Mic',
         text: 'Recording stopped. Sending to Pluto…',
