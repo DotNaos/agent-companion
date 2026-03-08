@@ -168,6 +168,7 @@ describe('voice transcript streaming', () => {
                 label: 'Pluto',
                 text: 'Ich kann dir bei der Planung helfen. Gibt',
                 tone: 'neutral',
+                turnId: 1,
             },
             '2026-03-08T18:23:52.000Z',
         );
@@ -179,6 +180,7 @@ describe('voice transcript streaming', () => {
                 label: 'Pluto',
                 text: 'es einen bestimmten Bereich, in dem du Hilfe benötigst?',
                 tone: 'neutral',
+                turnId: 1,
             },
             '2026-03-08T18:23:55.000Z',
         );
@@ -187,6 +189,36 @@ describe('voice transcript streaming', () => {
         expect(updated[0]?.text).toBe(
             'Ich kann dir bei der Planung helfen. Gibt es einen bestimmten Bereich, in dem du Hilfe benötigst?',
         );
+    });
+
+    it('keeps Pluto chunks from different turns in separate bubbles', () => {
+        const started = appendVoiceTimelineEntry(
+            [],
+            {
+                actor: 'pluto',
+                label: 'Pluto',
+                text: 'Erste Antwort.',
+                tone: 'neutral',
+                turnId: 1,
+            },
+            '2026-03-08T18:23:52.000Z',
+        );
+
+        const updated = appendVoiceTimelineEntry(
+            started,
+            {
+                actor: 'pluto',
+                label: 'Pluto',
+                text: 'Zweite Antwort.',
+                tone: 'neutral',
+                turnId: 2,
+            },
+            '2026-03-08T18:23:52.400Z',
+        );
+
+        expect(updated).toHaveLength(2);
+        expect(updated[0]?.text).toBe('Erste Antwort.');
+        expect(updated[1]?.text).toBe('Zweite Antwort.');
     });
 
     it('does not merge system notices into one bubble stream', () => {
@@ -198,6 +230,7 @@ describe('voice transcript streaming', () => {
                     text: 'Pluto is listening.',
                     tone: 'neutral',
                     createdAt: '2026-03-08T17:38:28.000Z',
+                    turnId: undefined,
                 },
                 {
                     actor: 'system',

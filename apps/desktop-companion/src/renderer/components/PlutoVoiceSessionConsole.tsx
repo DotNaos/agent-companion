@@ -37,6 +37,7 @@ type VoiceTimelineEntry = {
     actor: 'you' | 'pluto' | 'system';
     tone: 'neutral' | 'accent' | 'error';
     createdAt: string;
+    turnId?: number;
 };
 
 type VoiceTimelineDraftEntry = Omit<VoiceTimelineEntry, 'id' | 'createdAt'>;
@@ -81,6 +82,9 @@ export function PlutoVoiceSessionConsole({
     const [recordingMode, setRecordingMode] = useState<RecordingMode | null>(
         null,
     );
+    const [activeStatusMessage, setActiveStatusMessage] = useState<
+        string | null
+    >(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [micLevel, setMicLevel] = useState(0);
     const [textDraft, setTextDraft] = useState('');
@@ -107,6 +111,11 @@ export function PlutoVoiceSessionConsole({
     const scheduledPlaybackTimeRef = useRef(0);
     const playbackSourcesRef = useRef(0);
     const pcmSourcesRef = useRef(new Set<AudioBufferSourceNode>());
+    const currentPlaybackTurnIdRef = useRef<number | null>(null);
+    const completedPlaybackTurnsRef = useRef(new Set<number>());
+    const pendingPlaybackTurnsRef = useRef(
+        new Map<number, Array<{ audioBase64: string; mimeType: string }>>(),
+    );
     const fallbackAudioRef = useRef<HTMLAudioElement | null>(null);
     const outputRoutingWarningShownRef = useRef(false);
     const micMonitorAnimationFrameRef = useRef<number | null>(null);
@@ -315,6 +324,12 @@ export function PlutoVoiceSessionConsole({
     }, [selectedSummary, sessionId]);
 
     useEffect(() => {
+        if (!sessionId) {
+            setActiveStatusMessage(null);
+        }
+    }, [sessionId]);
+
+    useEffect(() => {
         if (visibleTimeline.length === 0) {
             return;
         }
@@ -394,8 +409,10 @@ export function PlutoVoiceSessionConsole({
             event,
             appendTimelineEntry,
             cleanupAudioCapture,
-            playIncomingAudioChunk,
+            enqueueIncomingAudioChunk,
+            markOutputTurnComplete,
             publishError,
+            setActiveStatusMessage,
             setSession,
             setStreamState,
             stopPlayback,
@@ -406,6 +423,9 @@ export function PlutoVoiceSessionConsole({
     function stopPlayback() {
         scheduledPlaybackTimeRef.current = 0;
         playbackSourcesRef.current = 0;
+        currentPlaybackTurnIdRef.current = null;
+        completedPlaybackTurnsRef.current.clear();
+        pendingPlaybackTurnsRef.current.clear();
 
         for (const source of pcmSourcesRef.current) {
             try {
@@ -424,6 +444,85 @@ export function PlutoVoiceSessionConsole({
 
         setIsPlaying(false);
         resetPlutoSpeakingState();
+    }
+
+    function enqueueIncomingAudioChunk(
+        turnId: number,
+        audioBase64: string,
+        mimeType: string,
+    ) {
+        const queue = pendingPlaybackTurnsRef.current.get(turnId) ?? [];
+        queue.push({ audioBase64, mimeType });
+        pendingPlaybackTurnsRef.current.set(turnId, queue);
+        maybeAdvancePlaybackTurn();
+    }
+
+    function markOutputTurnComplete(turnId: number) {
+        completedPlaybackTurnsRef.current.add(turnId);
+        maybeAdvancePlaybackTurn();
+    }
+
+    function maybeAdvancePlaybackTurn() {
+        const currentTurnId = currentPlaybackTurnIdRef.current;
+
+        if (currentTurnId !== null) {
+            const currentQueue =
+                pendingPlaybackTurnsRef.current.get(currentTurnId);
+            if (
+                currentQueue &&
+                currentQueue.length > 0 &&
+                playbackSourcesRef.current === 0
+            ) {
+                const nextChunk = currentQueue.shift();
+                if (!nextChunk) {
+                    return;
+                }
+                if (currentQueue.length === 0) {
+                    pendingPlaybackTurnsRef.current.delete(currentTurnId);
+                }
+                void playIncomingAudioChunk(
+                    nextChunk.audioBase64,
+                    nextChunk.mimeType,
+                );
+                return;
+            }
+
+            if (playbackSourcesRef.current > 0) {
+                return;
+            }
+
+            if (
+                !completedPlaybackTurnsRef.current.has(currentTurnId) ||
+                (currentQueue && currentQueue.length > 0)
+            ) {
+                return;
+            }
+
+            currentPlaybackTurnIdRef.current = null;
+            completedPlaybackTurnsRef.current.delete(currentTurnId);
+        }
+
+        const nextTurnId = [...pendingPlaybackTurnsRef.current.keys()].sort(
+            (left, right) => left - right,
+        )[0];
+
+        if (nextTurnId === undefined) {
+            return;
+        }
+
+        const nextQueue = pendingPlaybackTurnsRef.current.get(nextTurnId);
+        const nextChunk = nextQueue?.shift();
+        if (!nextQueue || !nextChunk) {
+            pendingPlaybackTurnsRef.current.delete(nextTurnId);
+            return;
+        }
+
+        if (nextQueue.length === 0) {
+            pendingPlaybackTurnsRef.current.delete(nextTurnId);
+        }
+
+        currentPlaybackTurnIdRef.current = nextTurnId;
+        void playIncomingAudioChunk(nextChunk.audioBase64, nextChunk.mimeType);
     }
 
     async function sendAudioChunk(
@@ -571,6 +670,7 @@ export function PlutoVoiceSessionConsole({
             if (playbackSourcesRef.current === 0) {
                 setIsPlaying(false);
                 resetPlutoSpeakingState();
+                maybeAdvancePlaybackTurn();
             }
         });
 
@@ -599,6 +699,7 @@ export function PlutoVoiceSessionConsole({
             resetPlutoSpeakingState();
             scheduledPlaybackTimeRef.current = 0;
             URL.revokeObjectURL(objectUrl);
+            maybeAdvancePlaybackTurn();
         });
         await audio.play().catch(() => undefined);
     }
@@ -829,6 +930,7 @@ export function PlutoVoiceSessionConsole({
 
             <VoiceConsoleSupportPanel
                 roleStatus={roleStatus}
+                activeStatusMessage={activeStatusMessage}
                 isRecording={isRecording}
                 liveMicFeedback={liveMicFeedback}
                 micLevel={micLevel}
@@ -893,9 +995,17 @@ export function PlutoVoiceSessionConsole({
                                         : 'Playback idle'}
                                 </Badge>
                             </div>
+                            {activeStatusMessage ? (
+                                <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+                                    {activeStatusMessage}
+                                </div>
+                            ) : null}
                             <ScrollArea className="min-h-0 flex-1 rounded-2xl border border-white/10 bg-black/25 p-4">
                                 {renderVoiceTimeline(timeline, false)}
-                                <div ref={expandedTimelineEndRef} aria-hidden="true" />
+                                <div
+                                    ref={expandedTimelineEndRef}
+                                    aria-hidden="true"
+                                />
                             </ScrollArea>
                         </div>
                         <VoiceChatComposer
@@ -1082,8 +1192,10 @@ function handlePlutoStreamEvent({
     event,
     appendTimelineEntry,
     cleanupAudioCapture,
-    playIncomingAudioChunk,
+    enqueueIncomingAudioChunk,
+    markOutputTurnComplete,
     publishError,
+    setActiveStatusMessage,
     setSession,
     setStreamState,
     stopPlayback,
@@ -1094,8 +1206,14 @@ function handlePlutoStreamEvent({
         entry: Omit<VoiceTimelineEntry, 'id' | 'createdAt'>,
     ) => void;
     cleanupAudioCapture: () => void;
-    playIncomingAudioChunk: (base64: string, mimeType: string) => Promise<void>;
+    enqueueIncomingAudioChunk: (
+        turnId: number,
+        base64: string,
+        mimeType: string,
+    ) => void;
+    markOutputTurnComplete: (turnId: number) => void;
     publishError: (message: string) => void;
+    setActiveStatusMessage: Dispatch<SetStateAction<string | null>>;
     setSession: Dispatch<SetStateAction<PlutoVoiceSession | null>>;
     setStreamState: Dispatch<SetStateAction<StreamState>>;
     stopPlayback: () => void;
@@ -1107,6 +1225,7 @@ function handlePlutoStreamEvent({
             setSession(event.session);
             return;
         case 'input_transcription':
+            setActiveStatusMessage(null);
             appendTimelineEntry({
                 actor: 'you',
                 label: 'You',
@@ -1115,26 +1234,32 @@ function handlePlutoStreamEvent({
             });
             return;
         case 'output_transcription':
+            setActiveStatusMessage('Pluto is speaking…');
             appendTimelineEntry({
                 actor: 'pluto',
                 label: 'Pluto',
                 text: event.text,
                 tone: 'neutral',
+                turnId: event.turnId,
             });
             return;
         case 'audio_chunk':
-            void playIncomingAudioChunk(event.audioBase64, event.mimeType);
+            setActiveStatusMessage('Pluto is speaking…');
+            enqueueIncomingAudioChunk(
+                event.turnId,
+                event.audioBase64,
+                event.mimeType,
+            );
+            return;
+        case 'output_turn_complete':
+            setActiveStatusMessage('Pluto finished this response.');
+            markOutputTurnComplete(event.turnId);
             return;
         case 'status':
             if (event.interrupted) {
                 stopPlayback();
             }
-            appendTimelineEntry({
-                actor: 'system',
-                label: 'Status',
-                text: describeStatusEvent(event),
-                tone: 'neutral',
-            });
+            setActiveStatusMessage(describeStatusEvent(event));
             setSession((current) =>
                 current
                     ? {
@@ -1147,6 +1272,7 @@ function handlePlutoStreamEvent({
         case 'error':
             streamTerminalEventRef.current = 'error';
             stopPlayback();
+            setActiveStatusMessage('Pluto hit an error.');
             appendTimelineEntry({
                 actor: 'system',
                 label: 'Error',
@@ -1158,6 +1284,7 @@ function handlePlutoStreamEvent({
         case 'closed':
             streamTerminalEventRef.current = 'closed';
             stopPlayback();
+            setActiveStatusMessage(event.reason ?? 'Session closed.');
             appendTimelineEntry({
                 actor: 'system',
                 label: 'Closed',
@@ -1600,6 +1727,18 @@ function findVoiceTimelineMergeTargetIndex(
             continue;
         }
 
+        if (next.turnId !== undefined || entry.turnId !== undefined) {
+            if (entry.turnId === next.turnId && entry.actor === next.actor) {
+                return index;
+            }
+
+            if (entry.actor === next.actor) {
+                return -1;
+            }
+
+            continue;
+        }
+
         if (entry.actor === next.actor && entry.label === next.label) {
             return index;
         }
@@ -1613,12 +1752,16 @@ function findVoiceTimelineMergeTargetIndex(
 export function shouldMergeVoiceTimelineEntry(
     previous: Pick<
         VoiceTimelineEntry,
-        'actor' | 'label' | 'text' | 'tone' | 'createdAt'
+        'actor' | 'label' | 'text' | 'tone' | 'createdAt' | 'turnId'
     >,
     next: VoiceTimelineDraftEntry,
     now = new Date().toISOString(),
 ) {
     if (previous.actor !== next.actor || previous.label !== next.label) {
+        return false;
+    }
+
+    if (previous.turnId !== next.turnId) {
         return false;
     }
 
@@ -1650,7 +1793,10 @@ export function shouldMergeVoiceTimelineEntry(
     );
 }
 
-function isLikelyTranscriptContinuation(previousText: string, nextText: string) {
+function isLikelyTranscriptContinuation(
+    previousText: string,
+    nextText: string,
+) {
     if (!previousText || !nextText) {
         return false;
     }
@@ -2009,6 +2155,7 @@ function AudioDeviceControls({
 
 function VoiceConsoleSupportPanel({
     roleStatus,
+    activeStatusMessage,
     isRecording,
     liveMicFeedback,
     micLevel,
@@ -2028,6 +2175,7 @@ function VoiceConsoleSupportPanel({
         tone: 'neutral' | 'accent';
         message: string;
     } | null;
+    activeStatusMessage: string | null;
     isRecording: boolean;
     liveMicFeedback: string;
     micLevel: number;
@@ -2056,6 +2204,12 @@ function VoiceConsoleSupportPanel({
                             : 'mt-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100'
                     }>
                     {roleStatus.message}
+                </div>
+            ) : null}
+
+            {activeStatusMessage ? (
+                <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs text-slate-300">
+                    {activeStatusMessage}
                 </div>
             ) : null}
 

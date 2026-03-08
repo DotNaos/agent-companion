@@ -58,6 +58,8 @@ class PlutoVoiceSessionRuntime {
 	private session: LiveSessionConnection | null = null;
 	private connecting: Promise<LiveSessionConnection> | null = null;
 	private closing = false;
+	private nextOutputTurnId = 1;
+	private activeOutputTurnId: number | null = null;
 
 	constructor(
 		private readonly ai: GoogleGenAI,
@@ -180,17 +182,29 @@ class PlutoVoiceSessionRuntime {
 		}
 
 		const outputTranscription = content?.outputTranscription?.text?.trim();
+		const audioParts = content?.modelTurn?.parts ?? [];
+		const hasOutputAudio = audioParts.some((part) => part.inlineData?.data);
+		const hasOutputContent = Boolean(outputTranscription || hasOutputAudio);
+
+		if (hasOutputContent && this.activeOutputTurnId === null) {
+			this.activeOutputTurnId = this.nextOutputTurnId;
+			this.nextOutputTurnId += 1;
+		}
+
+		const outputTurnId = this.activeOutputTurnId;
 		if (outputTranscription) {
 			this.emitEvent({
 				type: "output_transcription",
+				turnId: outputTurnId ?? this.nextOutputTurnId,
 				text: outputTranscription,
 			});
 		}
 
-		for (const part of content?.modelTurn?.parts ?? []) {
+		for (const part of audioParts) {
 			if (part.inlineData?.data) {
 				this.emitEvent({
 					type: "audio_chunk",
+					turnId: outputTurnId ?? this.nextOutputTurnId,
 					audioBase64: part.inlineData.data,
 					mimeType: part.inlineData.mimeType ?? "audio/pcm;rate=24000",
 				});
@@ -198,6 +212,7 @@ class PlutoVoiceSessionRuntime {
 		}
 
 		if (content?.interrupted) {
+			this.activeOutputTurnId = null;
 			this.emitEvent({
 				type: "status",
 				status: "idle",
@@ -221,6 +236,13 @@ class PlutoVoiceSessionRuntime {
 		}
 
 		if (content?.turnComplete) {
+			if (outputTurnId !== null) {
+				this.emitEvent({
+					type: "output_turn_complete",
+					turnId: outputTurnId,
+				});
+			}
+			this.activeOutputTurnId = null;
 			this.emitEvent({
 				type: "status",
 				status: "idle",

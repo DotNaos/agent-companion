@@ -200,12 +200,18 @@ export const plutoVoiceSessionStreamEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("output_transcription"),
+    turnId: z.number().int().positive(),
     text: z.string().min(1),
   }),
   z.object({
     type: z.literal("audio_chunk"),
+    turnId: z.number().int().positive(),
     audioBase64: z.string().min(1),
     mimeType: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("output_turn_complete"),
+    turnId: z.number().int().positive(),
   }),
   z.object({
     type: z.literal("status"),
