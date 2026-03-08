@@ -5,12 +5,15 @@
     "packageManager": "pnpm@10.11.0",
     "scripts": {
         "build": "turbo run build",
+        "lint": "eslint .",
+        "lint:fix": "eslint . --fix",
         "logs:clean": "node ./scripts/clean-logs.mjs",
         "dev": "node ./scripts/run-with-dev-log.mjs workspace -- turbo run dev",
         "test": "turbo run test",
         "typecheck": "turbo run typecheck"
     },
     "devDependencies": {
+        "@eslint/js": "^10.0.1",
         "@types/cookie-parser": "^1.4.10",
         "@types/express": "^5.0.3",
         "@types/node": "^24.8.1",
@@ -21,10 +24,13 @@
         "@vitejs/plugin-react": "^5.0.4",
         "cross-env": "^10.1.0",
         "dotenv": "^16.6.1",
+        "eslint": "^10.0.3",
+        "globals": "^17.4.0",
         "supertest": "^7.1.4",
         "tsx": "^4.20.6",
         "turbo": "^2.8.14",
         "typescript": "^5.9.3",
+        "typescript-eslint": "^8.56.1",
         "vite": "^7.1.10",
         "vitest": "^3.2.4"
     },
