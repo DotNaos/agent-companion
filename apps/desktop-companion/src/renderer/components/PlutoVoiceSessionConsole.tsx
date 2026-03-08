@@ -111,6 +111,8 @@ export function PlutoVoiceSessionConsole({
     const micMonitorAnimationFrameRef = useRef<number | null>(null);
     const micMonitorContextRef = useRef<AudioContext | null>(null);
     const micMonitorSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const panelTimelineEndRef = useRef<HTMLDivElement | null>(null);
+    const expandedTimelineEndRef = useRef<HTMLDivElement | null>(null);
     const intentionalSocketCloseRef = useRef(false);
     const transportErrorRef = useRef(false);
     const streamTerminalEventRef = useRef<'error' | 'closed' | null>(null);
@@ -310,6 +312,30 @@ export function PlutoVoiceSessionConsole({
         }
         setSession((current) => current ?? null);
     }, [selectedSummary, sessionId]);
+
+    useEffect(() => {
+        if (visibleTimeline.length === 0) {
+            return;
+        }
+
+        const frame = globalThis.requestAnimationFrame(() => {
+            panelTimelineEndRef.current?.scrollIntoView({
+                block: 'end',
+                behavior: 'auto',
+            });
+
+            if (isChatExpanded) {
+                expandedTimelineEndRef.current?.scrollIntoView({
+                    block: 'end',
+                    behavior: 'auto',
+                });
+            }
+        });
+
+        return () => {
+            globalThis.cancelAnimationFrame(frame);
+        };
+    }, [isChatExpanded, timeline, visibleTimeline]);
 
     const stopRecording = () => {
         stopPlutoRecording(audioCaptureRef, appendTimelineEntry, recordingMode);
@@ -807,6 +833,7 @@ export function PlutoVoiceSessionConsole({
 
             <ScrollArea className="mt-4 h-56 rounded-2xl border border-white/10 bg-black/30 p-3">
                 {renderVoiceTimeline(visibleTimeline, false)}
+                <div ref={panelTimelineEndRef} aria-hidden="true" />
             </ScrollArea>
 
             <Dialog open={isChatExpanded} onOpenChange={setIsChatExpanded}>
@@ -840,6 +867,7 @@ export function PlutoVoiceSessionConsole({
                             </div>
                             <ScrollArea className="min-h-0 flex-1 rounded-2xl border border-white/10 bg-black/25 p-4">
                                 {renderVoiceTimeline(timeline, false)}
+                                <div ref={expandedTimelineEndRef} aria-hidden="true" />
                             </ScrollArea>
                         </div>
                         <VoiceChatComposer
