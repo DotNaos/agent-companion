@@ -225,6 +225,9 @@ export async function startControlServer(state: RunnerState, port: number) {
               clientId: parsed.clientId,
             });
             break;
+          case "text_input":
+            await state.sendPlutoVoiceSessionText(sessionId, parsed.input);
+            break;
           case "ping":
             ws.send(JSON.stringify({ type: "status", status: "idle" }));
             break;

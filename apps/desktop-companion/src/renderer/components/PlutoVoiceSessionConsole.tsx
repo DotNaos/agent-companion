@@ -4,7 +4,7 @@ import type {
     PlutoVoiceSessionSummary,
 } from '@agent-companion/shared';
 import { plutoVoiceSessionStreamEventSchema } from '@agent-companion/shared';
-import { Mic, MicOff, Radio, Volume2 } from 'lucide-react';
+import { Expand, Mic, MicOff, Radio, Volume2 } from 'lucide-react';
 import {
     type Dispatch,
     type SetStateAction,
@@ -14,20 +14,35 @@ import {
     useState,
 } from 'react';
 import { parseJsonWebSocketData } from '../websocket.js';
-import { plutoAudioState } from './PlutoAvatar.js';
+import {
+    resetPlutoSpeakingState,
+    setPlutoSpeakingState,
+} from './PlutoAvatar.js';
 import { Badge } from './ui/badge.js';
 import { Button } from './ui/button.js';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from './ui/dialog.js';
+import { Input } from './ui/input.js';
 import { ScrollArea } from './ui/scroll-area.js';
 
 type VoiceTimelineEntry = {
     id: string;
     label: string;
     text: string;
+    actor: 'you' | 'pluto' | 'system';
     tone: 'neutral' | 'accent' | 'error';
     createdAt: string;
 };
 
+type VoiceTimelineDraftEntry = Omit<VoiceTimelineEntry, 'id' | 'createdAt'>;
+
 type StreamState = 'idle' | 'connecting' | 'connected' | 'closed';
+type RecordingMode = 'push-to-talk' | 'live';
 type PlutoAudioCapture = {
     stop: () => void;
 };
@@ -61,9 +76,14 @@ export function PlutoVoiceSessionConsole({
     const [streamState, setStreamState] = useState<StreamState>('idle');
     const [session, setSession] = useState<PlutoVoiceSession | null>(null);
     const [timeline, setTimeline] = useState<VoiceTimelineEntry[]>([]);
+    const [isChatExpanded, setIsChatExpanded] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
+    const [recordingMode, setRecordingMode] = useState<RecordingMode | null>(
+        null,
+    );
     const [isPlaying, setIsPlaying] = useState(false);
     const [micLevel, setMicLevel] = useState(0);
+    const [textDraft, setTextDraft] = useState('');
     const [inlineNotice, setInlineNotice] = useState<{
         tone: 'neutral' | 'accent' | 'error';
         message: string;
@@ -292,18 +312,21 @@ export function PlutoVoiceSessionConsole({
     }, [selectedSummary, sessionId]);
 
     const stopRecording = () => {
-        stopPlutoRecording(audioCaptureRef, appendTimelineEntry);
+        stopPlutoRecording(audioCaptureRef, appendTimelineEntry, recordingMode);
+        setRecordingMode(null);
     };
 
-    const toggleRecording = async () => {
+    const toggleRecording = async (mode: RecordingMode = 'push-to-talk') => {
         await togglePlutoRecording({
             appendTimelineEntry,
+            appendStandaloneTimelineEntry,
             cleanupAudioCapture,
             clientId,
             isRecording,
             isSpeaker,
             audioCaptureRef,
             mediaStreamRef,
+            mode,
             publishError,
             publishInfo,
             refreshAudioDevices,
@@ -311,11 +334,32 @@ export function PlutoVoiceSessionConsole({
             sendAudioChunk,
             sessionId,
             setIsRecording,
+            setRecordingMode,
             socketRef,
             startMicMonitor,
             stopMediaStream,
             stopRecording,
         });
+    };
+
+    const requestMic = async () => {
+        if (!sessionId || !onRequestSpeaker) {
+            return;
+        }
+
+        try {
+            setIsTakingMic(true);
+            publishInfo('Requesting the mic for this Pluto session…');
+            await onRequestSpeaker(sessionId);
+        } catch (error) {
+            publishError(
+                error instanceof Error
+                    ? error.message
+                    : 'Failed to take the mic for this Pluto session.',
+            );
+        } finally {
+            setIsTakingMic(false);
+        }
     };
 
     const handleStreamEvent = (event: PlutoVoiceSessionStreamEvent) => {
@@ -350,6 +394,66 @@ export function PlutoVoiceSessionConsole({
                 },
             }),
         );
+    }
+
+    function appendStandaloneTimelineEntry(entry: VoiceTimelineDraftEntry) {
+        setTimeline((current) => {
+            const nextEntry: VoiceTimelineEntry = {
+                ...entry,
+                id: crypto.randomUUID(),
+                createdAt: new Date().toISOString(),
+            };
+
+            return [...current, nextEntry].slice(-30);
+        });
+    }
+
+    async function sendTextTurn(text: string) {
+        if (!sessionId || !clientId) {
+            publishError('Join the active Pluto session before sending text.');
+            return false;
+        }
+
+        if (!isSpeaker) {
+            publishError('Take the mic before sending text to Pluto.');
+            return false;
+        }
+
+        if (socketRef.current?.readyState !== WebSocket.OPEN) {
+            publishError('The Pluto session stream is not connected yet.');
+            return false;
+        }
+
+        appendStandaloneTimelineEntry({
+            actor: 'you',
+            label: 'You',
+            text,
+            tone: 'accent',
+        });
+
+        socketRef.current.send(
+            JSON.stringify({
+                type: 'text_input',
+                input: {
+                    clientId,
+                    text,
+                },
+            }),
+        );
+        publishInfo('Sent your text turn to Pluto.');
+        return true;
+    }
+
+    async function submitTextDraft() {
+        const trimmed = textDraft.trim();
+        if (!trimmed) {
+            return;
+        }
+
+        const sent = await sendTextTurn(trimmed);
+        if (sent) {
+            setTextDraft('');
+        }
     }
 
     async function playIncomingAudioChunk(base64: string, mimeType: string) {
@@ -404,10 +508,7 @@ export function PlutoVoiceSessionConsole({
         scheduledPlaybackTimeRef.current = startAt + buffer.duration;
         playbackSourcesRef.current += 1;
         setIsPlaying(true);
-        if (plutoAudioState) {
-            plutoAudioState.isSpeaking = true;
-            plutoAudioState.volume = Math.min(1, amplitudeSum / frameCount);
-        }
+        setPlutoSpeakingState(true, Math.min(1, amplitudeSum / frameCount));
 
         source.addEventListener('ended', () => {
             playbackSourcesRef.current = Math.max(
@@ -416,10 +517,7 @@ export function PlutoVoiceSessionConsole({
             );
             if (playbackSourcesRef.current === 0) {
                 setIsPlaying(false);
-                if (plutoAudioState) {
-                    plutoAudioState.isSpeaking = false;
-                    plutoAudioState.volume = 0;
-                }
+                resetPlutoSpeakingState();
             }
         });
 
@@ -441,39 +539,19 @@ export function PlutoVoiceSessionConsole({
         );
         audio.addEventListener('play', () => {
             setIsPlaying(true);
-            if (plutoAudioState) {
-                plutoAudioState.isSpeaking = true;
-                plutoAudioState.volume = 0.6;
-            }
+            setPlutoSpeakingState(true, 0.6);
         });
         audio.addEventListener('ended', () => {
             setIsPlaying(false);
-            if (plutoAudioState) {
-                plutoAudioState.isSpeaking = false;
-                plutoAudioState.volume = 0;
-            }
+            resetPlutoSpeakingState();
             URL.revokeObjectURL(objectUrl);
         });
         await audio.play().catch(() => undefined);
     }
 
-    function appendTimelineEntry(
-        entry: Omit<VoiceTimelineEntry, 'id' | 'createdAt'>,
-    ) {
+    function appendTimelineEntry(entry: VoiceTimelineDraftEntry) {
         setTimeline((current) => {
-            const nextEntry: VoiceTimelineEntry = {
-                ...entry,
-                id: crypto.randomUUID(),
-                createdAt: new Date().toISOString(),
-            };
-            const previous = current.at(-1);
-            if (
-                previous?.label === nextEntry.label &&
-                previous.text === nextEntry.text
-            ) {
-                return current;
-            }
-            return [...current, nextEntry].slice(-30);
+            return appendVoiceTimelineEntry(current, entry);
         });
     }
 
@@ -485,6 +563,7 @@ export function PlutoVoiceSessionConsole({
         stopMicMonitor();
         stopMediaStream();
         setIsRecording(false);
+        setRecordingMode(null);
     }
 
     function stopMediaStream() {
@@ -602,17 +681,62 @@ export function PlutoVoiceSessionConsole({
         }
     }
 
+    if (isOverlay) {
+        return (
+            <div className="flex w-full flex-col gap-2 text-left">
+                {visibleTimeline.length === 0 ? null : (
+                    <div className="flex flex-col gap-2">
+                        {visibleTimeline.map((entry) => (
+                            <div
+                                key={entry.id}
+                                className={getTimelineEntryRowClass(entry)}>
+                                <div
+                                    className={getTimelineEntryBubbleClass(
+                                        entry,
+                                        true,
+                                    )}>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span
+                                            className={timelineToneClass(
+                                                entry.tone,
+                                            )}>
+                                            {entry.label}
+                                        </span>
+                                        <time className="text-[11px] text-slate-500">
+                                            {new Date(
+                                                entry.createdAt,
+                                            ).toLocaleTimeString()}
+                                        </time>
+                                    </div>
+                                    <p className="mt-1 text-sm text-slate-100">
+                                        {entry.text}
+                                    </p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
     return (
         <div
             className={
-                isOverlay
-                    ? 'flex w-full flex-col gap-3 text-left'
-                    : 'mt-4 rounded-2xl border border-white/10 bg-slate-950/60 p-4'
+                'mt-4 rounded-2xl border border-white/10 bg-slate-950/60 p-4'
             }>
             <div className="flex flex-wrap items-center gap-2">
                 <h4 className="mr-auto text-sm font-semibold text-slate-100">
-                    {isOverlay ? 'Voice chat' : 'Live voice console'}
+                    Live voice console
                 </h4>
+                <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-white/10 bg-black/30 text-slate-200 hover:bg-white/8"
+                    onClick={() => setIsChatExpanded(true)}>
+                    <Expand className="mr-1.5 h-4 w-4" />
+                    Open chat
+                </Button>
                 <Badge
                     variant="secondary"
                     className="border-white/10 bg-black/40 text-slate-300">
@@ -631,32 +755,12 @@ export function PlutoVoiceSessionConsole({
                 <Button
                     size="sm"
                     onClick={() => {
-                        if (
-                            primaryAction.mode === 'take-mic' &&
-                            sessionId &&
-                            onRequestSpeaker
-                        ) {
-                            void (async () => {
-                                try {
-                                    setIsTakingMic(true);
-                                    publishInfo(
-                                        'Requesting the mic for this Pluto session…',
-                                    );
-                                    await onRequestSpeaker(sessionId);
-                                } catch (error) {
-                                    publishError(
-                                        error instanceof Error
-                                            ? error.message
-                                            : 'Failed to take the mic for this Pluto session.',
-                                    );
-                                } finally {
-                                    setIsTakingMic(false);
-                                }
-                            })();
+                        if (primaryAction.mode === 'take-mic') {
+                            void requestMic();
                             return;
                         }
 
-                        void toggleRecording();
+                        void toggleRecording('push-to-talk');
                     }}
                     disabled={primaryAction.disabled}>
                     {isRecording ? (
@@ -701,47 +805,118 @@ export function PlutoVoiceSessionConsole({
                 }}
             />
 
-            <ScrollArea
-                className={
-                    isOverlay
-                        ? 'mt-1 h-44 rounded-2xl border border-white/10 bg-black/30 p-3'
-                        : 'mt-4 h-56 rounded-2xl border border-white/10 bg-black/30 p-3'
-                }>
-                <div className="space-y-3">
-                    {visibleTimeline.length === 0 ? (
-                        <div className="text-sm text-slate-500">
-                            Pluto is waiting for the first live event.
-                        </div>
-                    ) : (
-                        visibleTimeline.map((entry) => (
-                            <div
-                                key={entry.id}
-                                className={
-                                    isOverlay
-                                        ? 'rounded-2xl border border-white/8 bg-white/6 p-3'
-                                        : 'rounded-xl border border-white/8 bg-white/4 p-3'
-                                }>
-                                <div className="flex items-center justify-between gap-2">
-                                    <span
-                                        className={timelineToneClass(
-                                            entry.tone,
-                                        )}>
-                                        {entry.label}
-                                    </span>
-                                    <time className="text-[11px] text-slate-500">
-                                        {new Date(
-                                            entry.createdAt,
-                                        ).toLocaleTimeString()}
-                                    </time>
-                                </div>
-                                <p className="mt-1 text-sm text-slate-200">
-                                    {entry.text}
-                                </p>
-                            </div>
-                        ))
-                    )}
-                </div>
+            <ScrollArea className="mt-4 h-56 rounded-2xl border border-white/10 bg-black/30 p-3">
+                {renderVoiceTimeline(visibleTimeline, false)}
             </ScrollArea>
+
+            <Dialog open={isChatExpanded} onOpenChange={setIsChatExpanded}>
+                <DialogContent className="h-[calc(100vh-40px)] w-[calc(100vw-40px)] max-h-[calc(100vh-40px)] max-w-none overflow-hidden p-0">
+                    <div className="flex h-full flex-col bg-[linear-gradient(180deg,rgba(9,15,25,0.98),rgba(7,11,20,0.98))]">
+                        <DialogHeader className="border-b border-white/10 px-6 py-5 pr-16">
+                            <DialogTitle className="text-2xl">
+                                Pluto voice chat
+                            </DialogTitle>
+                            <DialogDescription>
+                                Large transcript view for the live Pluto voice
+                                session.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="flex min-h-0 flex-1 flex-col px-6 py-5">
+                            <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                                <Badge
+                                    variant="secondary"
+                                    className="border-white/10 bg-black/40 text-slate-300">
+                                    <Radio className="mr-1 h-3.5 w-3.5" />
+                                    {formatStreamState(streamState)}
+                                </Badge>
+                                <Badge
+                                    variant="secondary"
+                                    className="border-white/10 bg-black/40 text-slate-300">
+                                    <Volume2 className="mr-1 h-3.5 w-3.5" />
+                                    {isPlaying
+                                        ? 'Pluto speaking'
+                                        : 'Playback idle'}
+                                </Badge>
+                            </div>
+                            <ScrollArea className="min-h-0 flex-1 rounded-2xl border border-white/10 bg-black/25 p-4">
+                                {renderVoiceTimeline(timeline, false)}
+                            </ScrollArea>
+                        </div>
+                        <VoiceChatComposer
+                            canRequestSpeaker={canRequestSpeaker}
+                            canSend={Boolean(
+                                sessionId && clientId && isSpeaker,
+                            )}
+                            draft={textDraft}
+                            inputDisabled={
+                                !sessionId || !clientId || !isSpeaker
+                            }
+                            isRecording={isRecording}
+                            isTakingMic={isTakingMic}
+                            mode={recordingMode}
+                            onChangeDraft={setTextDraft}
+                            onRequestMic={() => {
+                                void requestMic();
+                            }}
+                            onSend={() => {
+                                void submitTextDraft();
+                            }}
+                            onStartLive={() => {
+                                void toggleRecording('live');
+                            }}
+                            onStartPushToTalk={() => {
+                                void toggleRecording('push-to-talk');
+                            }}
+                            placeholder={getVoiceChatInputPlaceholder({
+                                hasClient: Boolean(clientId),
+                                hasSession: Boolean(sessionId),
+                                isSpeaker,
+                            })}
+                        />
+                    </div>
+                </DialogContent>
+            </Dialog>
+        </div>
+    );
+}
+
+function renderVoiceTimeline(
+    entries: VoiceTimelineEntry[],
+    isOverlay: boolean,
+) {
+    return (
+        <div className="space-y-3">
+            {entries.length === 0 ? (
+                <div className="text-sm text-slate-500">
+                    Pluto is waiting for the first live event.
+                </div>
+            ) : (
+                entries.map((entry) => (
+                    <div
+                        key={entry.id}
+                        className={getTimelineEntryRowClass(entry)}>
+                        <div
+                            className={getTimelineEntryBubbleClass(
+                                entry,
+                                isOverlay,
+                            )}>
+                            <div className="flex items-center justify-between gap-2">
+                                <span className={timelineToneClass(entry.tone)}>
+                                    {entry.label}
+                                </span>
+                                <time className="text-[11px] text-slate-500">
+                                    {new Date(
+                                        entry.createdAt,
+                                    ).toLocaleTimeString()}
+                                </time>
+                            </div>
+                            <p className="mt-1 text-sm text-slate-100">
+                                {entry.text}
+                            </p>
+                        </div>
+                    </div>
+                ))
+            )}
         </div>
     );
 }
@@ -875,6 +1050,7 @@ function handlePlutoStreamEvent({
             return;
         case 'input_transcription':
             appendTimelineEntry({
+                actor: 'you',
                 label: 'You',
                 text: event.text,
                 tone: 'accent',
@@ -882,6 +1058,7 @@ function handlePlutoStreamEvent({
             return;
         case 'output_transcription':
             appendTimelineEntry({
+                actor: 'pluto',
                 label: 'Pluto',
                 text: event.text,
                 tone: 'neutral',
@@ -892,6 +1069,7 @@ function handlePlutoStreamEvent({
             return;
         case 'status':
             appendTimelineEntry({
+                actor: 'system',
                 label: 'Status',
                 text: describeStatusEvent(event),
                 tone: 'neutral',
@@ -908,6 +1086,7 @@ function handlePlutoStreamEvent({
         case 'error':
             streamTerminalEventRef.current = 'error';
             appendTimelineEntry({
+                actor: 'system',
                 label: 'Error',
                 text: event.message,
                 tone: 'error',
@@ -917,6 +1096,7 @@ function handlePlutoStreamEvent({
         case 'closed':
             streamTerminalEventRef.current = 'closed';
             appendTimelineEntry({
+                actor: 'system',
                 label: 'Closed',
                 text: event.reason ?? 'Session closed.',
                 tone: 'neutral',
@@ -929,12 +1109,14 @@ function handlePlutoStreamEvent({
 
 async function togglePlutoRecording({
     appendTimelineEntry,
+    appendStandaloneTimelineEntry,
     cleanupAudioCapture,
     clientId,
     isRecording,
     isSpeaker,
     audioCaptureRef,
     mediaStreamRef,
+    mode,
     publishError,
     publishInfo,
     refreshAudioDevices,
@@ -942,6 +1124,7 @@ async function togglePlutoRecording({
     sendAudioChunk,
     sessionId,
     setIsRecording,
+    setRecordingMode,
     socketRef,
     startMicMonitor,
     stopMediaStream,
@@ -950,12 +1133,16 @@ async function togglePlutoRecording({
     appendTimelineEntry: (
         entry: Omit<VoiceTimelineEntry, 'id' | 'createdAt'>,
     ) => void;
+    appendStandaloneTimelineEntry: (
+        entry: Omit<VoiceTimelineEntry, 'id' | 'createdAt'>,
+    ) => void;
     cleanupAudioCapture: () => void;
     clientId: string | null;
     isRecording: boolean;
     isSpeaker: boolean | null | undefined;
     audioCaptureRef: { current: PlutoAudioCapture | null };
     mediaStreamRef: { current: MediaStream | null };
+    mode: RecordingMode;
     publishError: (message: string) => void;
     publishInfo: (message: string) => void;
     refreshAudioDevices: () => Promise<void>;
@@ -967,6 +1154,7 @@ async function togglePlutoRecording({
     ) => Promise<void>;
     sessionId: string | null;
     setIsRecording: Dispatch<SetStateAction<boolean>>;
+    setRecordingMode: Dispatch<SetStateAction<RecordingMode | null>>;
     socketRef: { current: WebSocket | null };
     startMicMonitor: (stream: MediaStream) => Promise<void>;
     stopMediaStream: () => void;
@@ -1043,6 +1231,7 @@ async function togglePlutoRecording({
             source.disconnect();
             audioCaptureRef.current = null;
             setIsRecording(false);
+            setRecordingMode(null);
             stopMediaStream();
             void audioContext.close().catch(() => undefined);
 
@@ -1078,13 +1267,20 @@ async function togglePlutoRecording({
         audioCaptureRef.current = { stop: stopCapture };
 
         setIsRecording(true);
+        setRecordingMode(mode);
         appendTimelineEntry({
-            label: 'Mic',
-            text: 'Recording started.',
+            actor: 'system',
+            label: mode === 'live' ? 'Live' : 'Mic',
+            text:
+                mode === 'live'
+                    ? 'Live mode started. Keep talking naturally — it stays on until you stop it.'
+                    : 'Recording started.',
             tone: 'accent',
         });
         publishInfo(
-            'Recording started. Speak and tap again when you are done.',
+            mode === 'live'
+                ? 'Live mode started. It will stay active until you switch it off.'
+                : 'Recording started. Speak and tap again when you are done.',
         );
     } catch (error) {
         cleanupAudioCapture();
@@ -1101,6 +1297,7 @@ function stopPlutoRecording(
     appendTimelineEntry: (
         entry: Omit<VoiceTimelineEntry, 'id' | 'createdAt'>,
     ) => void,
+    recordingMode: RecordingMode | null,
 ) {
     const capture = audioCaptureRef.current;
     if (!capture) {
@@ -1108,10 +1305,343 @@ function stopPlutoRecording(
     }
     capture.stop();
     appendTimelineEntry({
-        label: 'Mic',
-        text: 'Recording stopped. Sending to Pluto…',
+        actor: 'system',
+        label: recordingMode === 'live' ? 'Live' : 'Mic',
+        text:
+            recordingMode === 'live'
+                ? 'Live mode stopped. Sending to Pluto…'
+                : 'Recording stopped. Sending to Pluto…',
         tone: 'neutral',
     });
+}
+
+function VoiceChatComposer({
+    canRequestSpeaker,
+    canSend,
+    draft,
+    inputDisabled,
+    isRecording,
+    isTakingMic,
+    mode,
+    onChangeDraft,
+    onRequestMic,
+    onSend,
+    onStartLive,
+    onStartPushToTalk,
+    placeholder,
+}: Readonly<{
+    canRequestSpeaker: boolean;
+    canSend: boolean;
+    draft: string;
+    inputDisabled: boolean;
+    isRecording: boolean;
+    isTakingMic: boolean;
+    mode: RecordingMode | null;
+    onChangeDraft: (value: string) => void;
+    onRequestMic: () => void;
+    onSend: () => void;
+    onStartLive: () => void;
+    onStartPushToTalk: () => void;
+    placeholder: string;
+}>) {
+    const pushToTalkActive = isRecording && mode === 'push-to-talk';
+    const liveActive = isRecording && mode === 'live';
+
+    return (
+        <div className="border-t border-white/10 px-6 py-4">
+            {canRequestSpeaker ? (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-400/20 bg-cyan-500/10 px-4 py-3">
+                    <p className="text-sm text-cyan-100">
+                        The mic is free — take it here to chat with Pluto in
+                        full screen.
+                    </p>
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={onRequestMic}
+                        disabled={isTakingMic}>
+                        {isTakingMic ? 'Taking mic…' : 'Take mic'}
+                    </Button>
+                </div>
+            ) : null}
+
+            <div className="rounded-[28px] border border-white/10 bg-black/35 p-3 shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur">
+                <div className="flex flex-wrap items-center gap-3">
+                    <Input
+                        value={draft}
+                        onChange={(event) => onChangeDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key !== 'Enter') {
+                                return;
+                            }
+
+                            event.preventDefault();
+                            onSend();
+                        }}
+                        disabled={inputDisabled || isTakingMic}
+                        placeholder={placeholder}
+                        className="h-14 min-w-70 flex-1 rounded-[22px] border-white/5 bg-white/5 px-5 text-base placeholder:text-slate-500 focus:border-cyan-300/40 focus:ring-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    <Button
+                        size="icon"
+                        variant={pushToTalkActive ? 'default' : 'secondary'}
+                        className="h-14 w-14"
+                        title={
+                            pushToTalkActive ? 'Stop and send' : 'Push to talk'
+                        }
+                        onClick={onStartPushToTalk}
+                        disabled={!canSend}>
+                        {pushToTalkActive ? (
+                            <MicOff className="h-5 w-5" />
+                        ) : (
+                            <Mic className="h-5 w-5" />
+                        )}
+                    </Button>
+                    <Button
+                        size="icon"
+                        variant={liveActive ? 'default' : 'secondary'}
+                        className="h-14 w-14"
+                        title={liveActive ? 'Stop live mode' : 'Live mode'}
+                        onClick={onStartLive}
+                        disabled={!canSend}>
+                        <Radio className="h-5 w-5" />
+                    </Button>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+                    <span>
+                        {canSend
+                            ? 'Press Enter to send text, use Mic for push-to-talk, or Live for automatic end-of-speech sending.'
+                            : canRequestSpeaker
+                              ? 'Take the mic first, then you can type or speak to Pluto here.'
+                              : 'This fullscreen view mirrors the live transcript until you become the speaker.'}
+                    </span>
+                    <span>
+                        {liveActive
+                            ? 'Live mode stays active until you switch it off.'
+                            : pushToTalkActive
+                              ? 'Push-to-talk recording is active.'
+                              : 'Ready when you are.'}
+                    </span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function getVoiceChatInputPlaceholder({
+    hasClient,
+    hasSession,
+    isSpeaker,
+}: Readonly<{
+    hasClient: boolean;
+    hasSession: boolean;
+    isSpeaker: boolean;
+}>) {
+    if (!hasSession) {
+        return 'Select a Pluto session to start chatting…';
+    }
+    if (!hasClient) {
+        return 'Join the Pluto session first…';
+    }
+    if (!isSpeaker) {
+        return 'Take the mic to type or talk to Pluto…';
+    }
+    return 'Type a message to Pluto and press Enter…';
+}
+
+function getTimelineEntryRowClass(entry: VoiceTimelineEntry) {
+    return getVoiceTimelineLayout(entry.actor, false).rowClass;
+}
+
+function getTimelineEntryBubbleClass(
+    entry: VoiceTimelineEntry,
+    isOverlay: boolean,
+) {
+    return getVoiceTimelineLayout(entry.actor, isOverlay).bubbleClass;
+}
+
+export function getVoiceTimelineLayout(
+    actor: VoiceTimelineEntry['actor'],
+    isOverlay: boolean,
+) {
+    const rowClass =
+        actor === 'you'
+            ? 'flex justify-end'
+            : actor === 'pluto'
+              ? 'flex justify-start'
+              : 'flex justify-center';
+
+    const baseClass = isOverlay
+        ? 'max-w-[85%] rounded-2xl px-3 py-2'
+        : 'max-w-[80%] rounded-2xl px-4 py-3';
+
+    const bubbleClass =
+        actor === 'you'
+            ? `${baseClass} border border-cyan-400/30 bg-cyan-500/15 text-right`
+            : actor === 'pluto'
+              ? `${baseClass} border border-white/10 bg-white/8`
+              : `${baseClass} border border-white/8 bg-black/25 text-center`;
+
+    return {
+        rowClass,
+        bubbleClass,
+    };
+}
+
+export function appendVoiceTimelineEntry(
+    current: VoiceTimelineEntry[],
+    entry: VoiceTimelineDraftEntry,
+    now = new Date().toISOString(),
+) {
+    const previous = current.at(-1);
+
+    if (previous?.label === entry.label && previous.text === entry.text) {
+        return current;
+    }
+
+    const mergeTargetIndex = findVoiceTimelineMergeTargetIndex(current, entry);
+    const mergeTarget =
+        mergeTargetIndex >= 0 ? current[mergeTargetIndex] : undefined;
+
+    if (mergeTarget && shouldMergeVoiceTimelineEntry(mergeTarget, entry, now)) {
+        const mergedEntry: VoiceTimelineEntry = {
+            ...mergeTarget,
+            text: mergeVoiceTimelineText(mergeTarget.text, entry.text),
+            tone: entry.tone,
+        };
+        return current.map((timelineEntry, index) =>
+            index === mergeTargetIndex ? mergedEntry : timelineEntry,
+        );
+    }
+
+    const nextEntry: VoiceTimelineEntry = {
+        ...entry,
+        id: crypto.randomUUID(),
+        createdAt: now,
+    };
+
+    return [...current, nextEntry].slice(-30);
+}
+
+function findVoiceTimelineMergeTargetIndex(
+    entries: VoiceTimelineEntry[],
+    next: VoiceTimelineDraftEntry,
+) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const entry = entries[index];
+        if (!entry) {
+            continue;
+        }
+
+        if (entry.actor === 'system') {
+            continue;
+        }
+
+        if (entry.actor === next.actor && entry.label === next.label) {
+            return index;
+        }
+
+        return -1;
+    }
+
+    return -1;
+}
+
+export function shouldMergeVoiceTimelineEntry(
+    previous: Pick<
+        VoiceTimelineEntry,
+        'actor' | 'label' | 'text' | 'tone' | 'createdAt'
+    >,
+    next: VoiceTimelineDraftEntry,
+    now = new Date().toISOString(),
+) {
+    if (previous.actor !== next.actor || previous.label !== next.label) {
+        return false;
+    }
+
+    if (previous.actor === 'system') {
+        return false;
+    }
+
+    const previousText = previous.text.trim();
+    const nextText = next.text.trim();
+
+    if (!previousText || !nextText) {
+        return true;
+    }
+
+    const previousTime = Date.parse(previous.createdAt);
+    const currentTime = Date.parse(now);
+    const withinStreamingWindow =
+        Number.isFinite(previousTime) &&
+        Number.isFinite(currentTime) &&
+        currentTime - previousTime <= 2_500;
+
+    return (
+        nextText.startsWith(previousText) ||
+        previousText.startsWith(nextText) ||
+        withinStreamingWindow ||
+        longestCommonPrefixLength(previousText, nextText) >=
+            Math.min(previousText.length, nextText.length) * 0.7
+    );
+}
+
+export function mergeVoiceTimelineText(previousText: string, nextText: string) {
+    const previousTrimmed = previousText.trim();
+    const nextTrimmed = nextText.trim();
+
+    if (!previousTrimmed) {
+        return nextTrimmed;
+    }
+
+    if (!nextTrimmed) {
+        return previousTrimmed;
+    }
+
+    if (nextTrimmed.startsWith(previousTrimmed)) {
+        return nextTrimmed;
+    }
+
+    if (previousTrimmed.startsWith(nextTrimmed)) {
+        return previousTrimmed;
+    }
+
+    const overlap = longestSuffixPrefixOverlap(previousTrimmed, nextTrimmed);
+    if (overlap >= 3) {
+        return `${previousTrimmed}${nextTrimmed.slice(overlap)}`.trim();
+    }
+
+    const joiner = shouldJoinWithoutSpace(previousTrimmed, nextTrimmed)
+        ? ''
+        : ' ';
+    return `${previousTrimmed}${joiner}${nextTrimmed}`.trim();
+}
+
+function longestSuffixPrefixOverlap(left: string, right: string) {
+    const maxLength = Math.min(left.length, right.length);
+
+    for (let size = maxLength; size > 0; size -= 1) {
+        if (left.slice(-size) === right.slice(0, size)) {
+            return size;
+        }
+    }
+
+    return 0;
+}
+
+function shouldJoinWithoutSpace(left: string, right: string) {
+    return /[\s([{„"']$/.test(left) || /^[,.;:!?)}\]"'”]/.test(right);
+}
+
+function longestCommonPrefixLength(left: string, right: string) {
+    const maxLength = Math.min(left.length, right.length);
+    let index = 0;
+
+    while (index < maxLength && left[index] === right[index]) {
+        index += 1;
+    }
+
+    return index;
 }
 
 function decodeBase64(base64: string) {

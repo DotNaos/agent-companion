@@ -7,7 +7,12 @@ import {
     type Bootstrap,
     type PlutoVoiceSelection,
 } from '../app-shared.js';
-import { PlutoAvatar, plutoAudioState } from './PlutoAvatar.js';
+import {
+    PlutoAvatar,
+    plutoAudioState,
+    resetPlutoSpeakingState,
+    setPlutoSpeakingState,
+} from './PlutoAvatar.js';
 import { PlutoVoiceSessionConsole } from './PlutoVoiceSessionConsole.js';
 
 type OverlayViewProps = Readonly<{
@@ -147,7 +152,7 @@ export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
         return () => {
             cancelled = true;
             setIsSpeaking(false);
-            resetPlutoAudioState();
+            resetPlutoSpeakingState();
             if (objectUrl) {
                 URL.revokeObjectURL(objectUrl);
             }
@@ -324,12 +329,7 @@ function bindAudioState(
             return;
         }
         setIsSpeaking(speaking);
-        if (plutoAudioState) {
-            plutoAudioState.isSpeaking = speaking;
-            if (!speaking) {
-                plutoAudioState.volume = 0;
-            }
-        }
+        setPlutoSpeakingState(speaking, plutoAudioState.volume);
     };
 
     audio.addEventListener('play', () => onSpeaking(true));
@@ -383,9 +383,7 @@ function bindAudioAnalyser(
             const dataArray = new Uint8Array(analyser.frequencyBinCount);
             const updateVolume = () => {
                 if (audio.paused || audio.ended || isCancelled()) {
-                    if (plutoAudioState) {
-                        plutoAudioState.volume = 0;
-                    }
+                    resetPlutoSpeakingState();
                     return;
                 }
 
@@ -395,9 +393,7 @@ function bindAudioAnalyser(
                     sum += value;
                 }
                 const average = sum / dataArray.length;
-                if (plutoAudioState) {
-                    plutoAudioState.volume = average / 255;
-                }
+                setPlutoSpeakingState(true, average / 255);
 
                 requestAnimationFrame(updateVolume);
             };
@@ -409,12 +405,4 @@ function bindAudioAnalyser(
     };
 
     audio.addEventListener('play', connectAnalyser);
-}
-
-function resetPlutoAudioState() {
-    if (!plutoAudioState) {
-        return;
-    }
-    plutoAudioState.isSpeaking = false;
-    plutoAudioState.volume = 0;
 }

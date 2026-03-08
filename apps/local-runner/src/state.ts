@@ -26,6 +26,7 @@ import {
     plutoVoiceSessionEventEnvelopeSchema,
     plutoVoiceSessionSchema,
     plutoVoiceSessionSummarySchema,
+    plutoVoiceSessionTextInputSchema,
     readFileInputSchema,
     relayRequestSchema,
     requiresApproval,
@@ -384,6 +385,30 @@ export class RunnerState {
     this.touchPlutoVoiceSessionClient(session, parsed.clientId);
     this.touchPlutoVoiceSession(session);
     await this.plutoService.endVoiceSessionAudio(sessionId);
+  }
+
+  async sendPlutoVoiceSessionText(sessionId: string, input: unknown) {
+    const session = this.requirePlutoVoiceSessionRecord(sessionId);
+    const parsed = plutoVoiceSessionTextInputSchema.parse(input);
+    this.requireSpeakerClient(session, parsed.clientId);
+    this.touchPlutoVoiceSessionClient(session, parsed.clientId);
+    session.status = "listening";
+    this.touchPlutoVoiceSession(session);
+    this.emitPlutoVoiceSessions();
+    try {
+      await this.plutoService.sendVoiceSessionText(sessionId, parsed.text);
+    } catch (error) {
+      session.status = "error";
+      this.touchPlutoVoiceSession(session);
+      this.emitPlutoVoiceSessions();
+      const message = error instanceof Error ? error.message : "Pluto voice session text send failed";
+      this.handlePlutoVoiceSessionEvent(sessionId, {
+        type: "error",
+        code: "PLUTO_VOICE_TEXT_SEND_FAILED",
+        message,
+      });
+      throw new AppError("PLUTO_VOICE_TEXT_SEND_FAILED", message, 503);
+    }
   }
 
   async handleRelayRequest(request: RelayRequest) {

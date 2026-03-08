@@ -8,6 +8,16 @@ export const plutoAudioState = {
     isSpeaking: false,
 };
 
+export function setPlutoSpeakingState(isSpeaking: boolean, volume?: number) {
+    plutoAudioState.isSpeaking = isSpeaking;
+    plutoAudioState.volume = isSpeaking ? Math.max(0, volume ?? 0.6) : 0;
+}
+
+export function resetPlutoSpeakingState() {
+    plutoAudioState.isSpeaking = false;
+    plutoAudioState.volume = 0;
+}
+
 interface CursorState {
     x: number;
     y: number;

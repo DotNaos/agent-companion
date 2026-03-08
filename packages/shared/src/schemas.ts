@@ -162,6 +162,11 @@ export const plutoVoiceSessionAudioStreamEndInputSchema = z.object({
   clientId: z.string().min(1),
 });
 
+export const plutoVoiceSessionTextInputSchema = z.object({
+  clientId: z.string().min(1),
+  text: z.string().trim().min(1).max(4_000),
+});
+
 export const plutoVoiceSessionStreamClientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("audio_chunk"),
@@ -170,6 +175,10 @@ export const plutoVoiceSessionStreamClientMessageSchema = z.discriminatedUnion("
   z.object({
     type: z.literal("audio_stream_end"),
     clientId: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("text_input"),
+    input: plutoVoiceSessionTextInputSchema,
   }),
   z.object({
     type: z.literal("ping"),
@@ -653,6 +662,7 @@ export type PlutoVoiceSessionDetachOutput = z.infer<typeof plutoVoiceSessionDeta
 export type PlutoVoiceSessionCloseOutput = z.infer<typeof plutoVoiceSessionCloseOutputSchema>;
 export type PlutoVoiceSessionAudioChunk = z.infer<typeof plutoVoiceSessionAudioChunkSchema>;
 export type PlutoVoiceSessionAudioStreamEndInput = z.infer<typeof plutoVoiceSessionAudioStreamEndInputSchema>;
+export type PlutoVoiceSessionTextInput = z.infer<typeof plutoVoiceSessionTextInputSchema>;
 export type PlutoVoiceSessionStreamClientMessage = z.infer<typeof plutoVoiceSessionStreamClientMessageSchema>;
 export type PlutoVoiceSessionStreamEvent = z.infer<typeof plutoVoiceSessionStreamEventSchema>;
 export type PlutoVoiceSessionEventEnvelope = z.infer<typeof plutoVoiceSessionEventEnvelopeSchema>;

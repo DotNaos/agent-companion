@@ -88,6 +88,14 @@ class PlutoVoiceSessionRuntime {
 		});
 	}
 
+	async sendTextTurn(text: string) {
+		const session = await this.ensureSession();
+		session.sendClientContent({
+			turns: text,
+			turnComplete: true,
+		});
+	}
+
 	close(reason: string | null = "session_closed") {
 		this.closing = true;
 		this.session?.close();
@@ -273,6 +281,14 @@ export class PlutoService {
 		}
 		const runtime = this.getOrCreateVoiceSessionRuntime(sessionId);
 		await runtime.endAudioStream();
+	}
+
+	async sendVoiceSessionText(sessionId: string, text: string) {
+		if (!this.ai) {
+			throw new Error("Gemini is not configured for Pluto live voice sessions");
+		}
+		const runtime = this.getOrCreateVoiceSessionRuntime(sessionId);
+		await runtime.sendTextTurn(text);
 	}
 
 	async notify(input: NotifyPlutoInput, options: { muted: boolean; actorEmail: string }): Promise<GeneratedPayload> {
