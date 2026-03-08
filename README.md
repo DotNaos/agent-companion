@@ -46,30 +46,30 @@ apps/desktop-companion
 ## Quickstart
 
 1. Install dependencies:
-   ```bash
-   pnpm install
-   ```
+    ```bash
+    pnpm install
+    ```
 2. Copy `.env.example` into your preferred environment loader and set real values for:
-   - `ADMIN_EMAIL`
-   - `RUNNER_TOKEN`
-   - `GOOGLE_ALLOWED_CLIENT_IDS`
-   - `GOOGLE_OIDC_CLIENT_ID`
-   - `GOOGLE_OIDC_CLIENT_SECRET`
-   - `SESSION_SECRET`
-   - `DESKTOP_PUBLIC_BASE_URL`
+    - `ADMIN_EMAIL`
+    - `RUNNER_TOKEN`
+    - `GOOGLE_ALLOWED_CLIENT_IDS`
+    - `GOOGLE_OIDC_CLIENT_ID`
+    - `GOOGLE_OIDC_CLIENT_SECRET`
+    - `SESSION_SECRET`
+    - `DESKTOP_PUBLIC_BASE_URL`
 3. Start the local runner:
-   ```bash
-   pnpm --filter @agent-companion/local-runner dev
-   ```
+    ```bash
+    pnpm --filter @agent-companion/local-runner dev
+    ```
 4. Start the remote MCP server:
-   ```bash
-   pnpm --filter @agent-companion/remote-mcp-server dev
-   ```
+    ```bash
+    pnpm --filter @agent-companion/remote-mcp-server dev
+    ```
 5. Start the desktop companion:
-   ```bash
-   pnpm --filter @agent-companion/desktop-companion renderer
-   pnpm --filter @agent-companion/desktop-companion dev
-   ```
+    ```bash
+    pnpm --filter @agent-companion/desktop-companion renderer
+    pnpm --filter @agent-companion/desktop-companion dev
+    ```
 6. Configure the projects root and allowed paths from the desktop app, then add any allowed repo tasks and `run_command` rules.
 
 ## Security Model
@@ -84,6 +84,20 @@ apps/desktop-companion
 
 - Typecheck: `pnpm typecheck`
 - Tests: `pnpm test`
+
+## Performance profiling
+
+- Capture an unattended desktop performance bundle: `pnpm profile:desktop`
+- Output is written to `profiles/desktop/<timestamp>/`
+- Each bundle includes:
+    - `summary.md` — LLM-friendly diagnosis summary
+    - `profile.json` — machine-readable metadata
+    - `ps.txt` — process snapshot
+    - `sample-*.txt` — short macOS process samples
+    - `vmmap-*.txt` — memory maps for hot processes (when available)
+    - copied desktop session logs from the latest `logs/<session>/`
+
+This workflow is designed so an agent can run the command, read `summary.md`, and inspect the raw artifacts without any human-in-the-loop triage.
 
 The current test suite covers the critical safety rules requested in the prompt, including path traversal rejection, per-path capability enforcement, `run_command` default denial, approval blocking, admin auth rejection, origin rejection, and safe-path happy paths.
 

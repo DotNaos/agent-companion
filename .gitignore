@@ -10,6 +10,7 @@ dist
 coverage
 .turbo
 logs/
+profiles/
 *.log
 *.sqlite
 *.db

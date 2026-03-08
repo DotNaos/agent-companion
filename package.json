@@ -8,6 +8,7 @@
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
         "logs:clean": "node ./scripts/clean-logs.mjs",
+        "profile:desktop": "node ./scripts/profile-desktop.mjs",
         "dev": "node ./scripts/run-with-dev-log.mjs workspace -- turbo run dev",
         "test": "turbo run test",
         "typecheck": "turbo run typecheck"
