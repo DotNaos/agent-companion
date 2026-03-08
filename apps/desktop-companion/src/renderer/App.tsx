@@ -786,11 +786,33 @@ export function App() {
                                         )}
                                     </div>
 
-                                    <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-black/20 p-3 text-xs text-slate-400">
-                                        {activeVoiceSessionId
-                                            ? 'The selected Pluto session now lives directly beside Pluto in the overlay. Use Record there.'
-                                            : 'Pick a Pluto session and it will light up here and open beside Pluto in the overlay.'}
-                                    </div>
+                                    {activeVoiceSessionId ? (
+                                        <div className="mt-4">
+                                            <div className="mb-3 rounded-2xl border border-dashed border-white/10 bg-black/20 p-3 text-xs text-slate-400">
+                                                Pluto stays talkable beside the avatar in the overlay — and the same controls are mirrored here so device setup and mic testing are easier to find.
+                                            </div>
+                                            <PlutoVoiceSessionConsole
+                                                apiBase={apiBase}
+                                                desktopToken={desktopToken}
+                                                sessionId={activeVoiceSessionId}
+                                                clientId={activeVoiceSessionClientId}
+                                                sessions={plutoVoiceSessions}
+                                                variant="panel"
+                                                onError={(message) => setError(message)}
+                                                onInfo={(message) => {
+                                                    setStatusMessage(message);
+                                                    globalThis.setTimeout(
+                                                        () => setStatusMessage(null),
+                                                        2500,
+                                                    );
+                                                }}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-black/20 p-3 text-xs text-slate-400">
+                                            Pick a Pluto session to reveal the full voice setup, microphone test, and live talk controls here and beside Pluto in the overlay.
+                                        </div>
+                                    )}
                                 </div>
                             </CardContent>
                         </Card>
@@ -2136,7 +2158,7 @@ function OverlayView({
                     </div>
                 ) : null}
                 {voiceSelection.sessionId ? (
-                    <div className="pet-bubble passive max-w-88 overflow-hidden">
+                    <div className="pet-bubble max-w-88 overflow-hidden">
                         <PlutoVoiceSessionConsole
                             apiBase="/api/desktop"
                             desktopToken={desktopToken}

@@ -50,12 +50,17 @@ export function PlutoVoiceSessionConsole({
     const [timeline, setTimeline] = useState<VoiceTimelineEntry[]>([]);
     const [isRecording, setIsRecording] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
+    const [micLevel, setMicLevel] = useState(0);
+    const [inlineNotice, setInlineNotice] = useState<{
+        tone: 'neutral' | 'accent' | 'error';
+        message: string;
+    } | null>(null);
     const [availableInputs, setAvailableInputs] = useState<MediaDeviceInfo[]>(
         [],
     );
-    const [availableOutputs, setAvailableOutputs] = useState<
-        MediaDeviceInfo[]
-    >([]);
+    const [availableOutputs, setAvailableOutputs] = useState<MediaDeviceInfo[]>(
+        [],
+    );
     const [selectedInputId, setSelectedInputId] = useState<string | null>(() =>
         readAudioDevicePreference(PLUTO_AUDIO_INPUT_STORAGE_KEY),
     );
@@ -69,6 +74,9 @@ export function PlutoVoiceSessionConsole({
     const playbackSourcesRef = useRef(0);
     const fallbackAudioRef = useRef<HTMLAudioElement | null>(null);
     const outputRoutingWarningShownRef = useRef(false);
+    const micMonitorAnimationFrameRef = useRef<number | null>(null);
+    const micMonitorContextRef = useRef<AudioContext | null>(null);
+    const micMonitorSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
     const selectedSummary = useMemo(
         () => sessions.find((entry) => entry.id === sessionId) ?? null,
@@ -90,6 +98,12 @@ export function PlutoVoiceSessionConsole({
         globalThis.navigator?.mediaDevices?.enumerateDevices,
     );
     const canRouteOutputDevice = supportsOutputDeviceSelection();
+    const inputDeviceHint = getInputDeviceHint({
+        canEnumerateDevices,
+        availableInputs,
+        isRecording,
+    });
+    const liveMicFeedback = getLiveMicFeedback(micLevel);
 
     useEffect(() => {
         void refreshAudioDevices();
@@ -105,7 +119,10 @@ export function PlutoVoiceSessionConsole({
 
         mediaDevices.addEventListener('devicechange', handleDeviceChange);
         return () => {
-            mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+            mediaDevices.removeEventListener(
+                'devicechange',
+                handleDeviceChange,
+            );
         };
     }, []);
 
@@ -211,19 +228,21 @@ export function PlutoVoiceSessionConsole({
         }
 
         if (!sessionId || !clientId || !isSpeaker) {
-            onError('Join the active Pluto session as speaker before talking.');
+            publishError(
+                'Join the active Pluto session as speaker before talking.',
+            );
             return;
         }
 
         if (!navigator.mediaDevices?.getUserMedia) {
-            onError(
+            publishError(
                 'This browser environment does not expose microphone capture.',
             );
             return;
         }
 
         if (socketRef.current?.readyState !== WebSocket.OPEN) {
-            onError('The Pluto session stream is not connected yet.');
+            publishError('The Pluto session stream is not connected yet.');
             return;
         }
 
@@ -236,6 +255,7 @@ export function PlutoVoiceSessionConsole({
             });
             mediaStreamRef.current = stream;
             void refreshAudioDevices();
+            void startMicMonitor(stream);
             const mimeType = pickRecordingMimeType();
             const recorder = mimeType
                 ? new MediaRecorder(stream, { mimeType })
@@ -273,10 +293,12 @@ export function PlutoVoiceSessionConsole({
                 text: 'Recording started.',
                 tone: 'accent',
             });
-            onInfo('Recording started. Speak and tap again when you are done.');
+            publishInfo(
+                'Recording started. Speak and tap again when you are done.',
+            );
         } catch (error) {
             cleanupAudioCapture();
-            onError(
+            publishError(
                 error instanceof Error
                     ? error.message
                     : 'Microphone capture failed',
@@ -341,7 +363,7 @@ export function PlutoVoiceSessionConsole({
                     text: event.message,
                     tone: 'error',
                 });
-                onError(event.message);
+                publishError(event.message);
                 return;
             case 'closed':
                 appendTimelineEntry({
@@ -507,6 +529,7 @@ export function PlutoVoiceSessionConsole({
             recorder.stop();
         }
         mediaRecorderRef.current = null;
+        stopMicMonitor();
         stopMediaStream();
         setIsRecording(false);
     }
@@ -514,6 +537,80 @@ export function PlutoVoiceSessionConsole({
     function stopMediaStream() {
         mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
+        setMicLevel(0);
+    }
+
+    async function startMicMonitor(stream: MediaStream) {
+        stopMicMonitor();
+
+        const AudioContextCtor =
+            globalThis.AudioContext ??
+            (globalThis as typeof globalThis & {
+                webkitAudioContext?: typeof AudioContext;
+            }).webkitAudioContext;
+
+        if (!AudioContextCtor) {
+            return;
+        }
+
+        try {
+            const ctx = new AudioContextCtor();
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+
+            const source = ctx.createMediaStreamSource(stream);
+            source.connect(analyser);
+
+            micMonitorContextRef.current = ctx;
+            micMonitorSourceRef.current = source;
+
+            const samples = new Uint8Array(analyser.fftSize);
+
+            const pumpLevel = () => {
+                analyser.getByteTimeDomainData(samples);
+
+                let deviation = 0;
+                for (const sample of samples) {
+                    deviation += Math.abs(sample - 128);
+                }
+
+                const normalized = Math.min(1, deviation / (samples.length * 24));
+                setMicLevel(normalized);
+                micMonitorAnimationFrameRef.current =
+                    globalThis.requestAnimationFrame(pumpLevel);
+            };
+
+            micMonitorAnimationFrameRef.current =
+                globalThis.requestAnimationFrame(pumpLevel);
+        } catch {
+            setMicLevel(0);
+        }
+    }
+
+    function stopMicMonitor() {
+        if (micMonitorAnimationFrameRef.current !== null) {
+            globalThis.cancelAnimationFrame(micMonitorAnimationFrameRef.current);
+            micMonitorAnimationFrameRef.current = null;
+        }
+
+        micMonitorSourceRef.current?.disconnect();
+        micMonitorSourceRef.current = null;
+
+        const ctx = micMonitorContextRef.current;
+        micMonitorContextRef.current = null;
+        if (ctx) {
+            void ctx.close().catch(() => undefined);
+        }
+    }
+
+    function publishInfo(message: string) {
+        setInlineNotice({ tone: 'accent', message });
+        onInfo(message);
+    }
+
+    function publishError(message: string) {
+        setInlineNotice({ tone: 'error', message });
+        onError(message);
     }
 
     async function refreshAudioDevices() {
@@ -522,7 +619,8 @@ export function PlutoVoiceSessionConsole({
         }
 
         try {
-            const devices = await globalThis.navigator.mediaDevices.enumerateDevices();
+            const devices =
+                await globalThis.navigator.mediaDevices.enumerateDevices();
             const inputs = devices
                 .filter((device) => device.kind === 'audioinput')
                 .filter(isSelectableDevice);
@@ -596,6 +694,33 @@ export function PlutoVoiceSessionConsole({
                 <span className="text-xs text-slate-400">{recordingHint}</span>
             </div>
 
+            {isRecording ? (
+                <div className="mt-3 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                        <div>
+                            <div className="text-sm font-semibold text-emerald-200">
+                                Pluto is listening
+                            </div>
+                            <p className="mt-1 text-xs text-emerald-100/90">
+                                {liveMicFeedback}
+                            </p>
+                        </div>
+                        <MicLevelMeter level={micLevel} />
+                    </div>
+                </div>
+            ) : null}
+
+            {inlineNotice ? (
+                <div
+                    className={
+                        inlineNotice.tone === 'error'
+                            ? 'mt-3 rounded-2xl border border-red-400/30 bg-red-500/10 p-3 text-xs text-red-200'
+                            : 'mt-3 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-xs text-cyan-100'
+                    }>
+                    {inlineNotice.message}
+                </div>
+            ) : null}
+
             {canEnumerateDevices ? (
                 <AudioDeviceControls
                     isOverlay={isOverlay}
@@ -606,7 +731,7 @@ export function PlutoVoiceSessionConsole({
                     canRouteOutputDevice={canRouteOutputDevice}
                     onSelectInput={(nextValue) => {
                         setSelectedInputId(nextValue);
-                        onInfo(
+                        publishInfo(
                             nextValue
                                 ? 'Microphone preference updated for Pluto voice chat.'
                                 : 'Microphone set to the system default input.',
@@ -614,13 +739,17 @@ export function PlutoVoiceSessionConsole({
                     }}
                     onSelectOutput={(nextValue) => {
                         setSelectedOutputId(nextValue);
-                        onInfo(
+                        publishInfo(
                             nextValue
                                 ? 'Playback device preference updated for Pluto voice chat.'
                                 : 'Playback set to the system default output.',
                         );
                     }}
                 />
+            ) : null}
+
+            {inputDeviceHint ? (
+                <p className="text-xs text-slate-500">{inputDeviceHint}</p>
             ) : null}
 
             <div
@@ -960,8 +1089,65 @@ function AudioDeviceControls({
     );
 }
 
+function MicLevelMeter({ level }: Readonly<{ level: number }>) {
+    const bars = [0.18, 0.34, 0.5, 0.66, 0.82];
+
+    return (
+        <div className="flex min-w-18 items-end gap-1 rounded-full border border-emerald-300/20 bg-black/20 px-3 py-2">
+            {bars.map((threshold, index) => {
+                const active = level >= threshold;
+                return (
+                    <span
+                        key={threshold}
+                        className={active ? 'bg-emerald-300' : 'bg-emerald-900/60'}
+                        style={{
+                            width: '0.35rem',
+                            height: `${0.55 + index * 0.3}rem`,
+                            borderRadius: '999px',
+                            transition: 'background-color 120ms ease',
+                        }}
+                    />
+                );
+            })}
+        </div>
+    );
+}
+
+function getLiveMicFeedback(level: number) {
+    if (level > 0.5) {
+        return 'Yep — I can hear you clearly.';
+    }
+    if (level > 0.22) {
+        return 'I can hear something. Keep talking.';
+    }
+    return 'Say something — the mic level should jump here.';
+}
+
+function getInputDeviceHint({
+    canEnumerateDevices,
+    availableInputs,
+    isRecording,
+}: Readonly<{
+    canEnumerateDevices: boolean;
+    availableInputs: MediaDeviceInfo[];
+    isRecording: boolean;
+}>) {
+    if (!canEnumerateDevices) {
+        return 'This renderer cannot list audio devices, so Pluto uses your system defaults.';
+    }
+    if (availableInputs.length > 0) {
+        return null;
+    }
+    if (isRecording) {
+        return 'Microphone access is active now — device names should appear as the browser exposes them.';
+    }
+    return 'If the device names are empty, tap Record once to let the browser unlock microphone details.';
+}
+
 function isSelectableDevice(device: MediaDeviceInfo) {
-    return device.deviceId !== 'default' && device.deviceId !== 'communications';
+    return (
+        device.deviceId !== 'default' && device.deviceId !== 'communications'
+    );
 }
 
 function normalizeAudioDeviceSelection(
@@ -1021,18 +1207,16 @@ function writeAudioDevicePreference(
 }
 
 function supportsOutputDeviceSelection() {
-    const audioElementPrototype =
-        globalThis.HTMLMediaElement?.prototype as
-            | (HTMLMediaElement & {
-                  setSinkId?: (sinkId: string) => Promise<void>;
-              })
-            | undefined;
-    const audioContextPrototype =
-        globalThis.AudioContext?.prototype as
-            | (AudioContext & {
-                  setSinkId?: (sinkId: string) => Promise<void>;
-              })
-            | undefined;
+    const audioElementPrototype = globalThis.HTMLMediaElement?.prototype as
+        | (HTMLMediaElement & {
+              setSinkId?: (sinkId: string) => Promise<void>;
+          })
+        | undefined;
+    const audioContextPrototype = globalThis.AudioContext?.prototype as
+        | (AudioContext & {
+              setSinkId?: (sinkId: string) => Promise<void>;
+          })
+        | undefined;
 
     return Boolean(
         audioElementPrototype?.setSinkId || audioContextPrototype?.setSinkId,
