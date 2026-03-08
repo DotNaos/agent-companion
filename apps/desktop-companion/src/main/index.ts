@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 import { CursorTracker } from "./cursor-tracker.js";
 import { loadDesktopEnv } from "./env.js";
 import { logger } from "./logger.js";
@@ -112,7 +113,10 @@ const desktopServer = createDesktopServer({
   userStore,
   desktopToken,
 });
-await bootstrap();
+debugLog("boot:start");
+app.once("ready", () => {
+  void bootstrap().catch(handleBootstrapError);
+});
 
 app.on("window-all-closed", () => {
   // Keep the tray app resident; windows hide instead of terminating the companion.
@@ -134,33 +138,68 @@ app.on("before-quit", () => {
 });
 
 async function bootstrap() {
-  try {
-    debugLog("boot:start");
-    await app.whenReady();
-    debugLog("boot:app-ready");
-    if (process.platform === "darwin") {
-      app.setActivationPolicy("regular");
-      app.dock?.show();
-      debugLog("boot:macos-activation-policy-set");
-    }
-    await runnerBridge.connect();
-    debugLog("boot:runner-connected", runnerBridge.getSnapshot().status);
-    plutoOrchestrator.start();
-    await desktopServer.listen();
-    debugLog("boot:desktop-server-listening", { port: env.DESKTOP_PORT });
-    createWindows();
-    cursorTracker.start();
-    createTray();
-    wireApprovals();
-    app.focus({ steal: true });
-    debugLog("boot:focus-called");
-  } catch (error) {
-    errorLog("boot:error", {
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    app.quit();
+  debugLog("boot:app-ready");
+  if (process.platform === "darwin") {
+    app.setActivationPolicy("regular");
+    app.dock?.show();
+    debugLog("boot:macos-activation-policy-set");
   }
+
+  await runnerBridge.connect();
+  debugLog("boot:runner-connected", runnerBridge.getSnapshot().status);
+  plutoOrchestrator.start();
+  await desktopServer.listen();
+  debugLog("boot:desktop-server-listening", { port: env.DESKTOP_PORT });
+  createWindows();
+  cursorTracker.start();
+  createTray();
+  wireApprovals();
+  app.focus({ steal: true });
+  debugLog("boot:focus-called");
+}
+
+function handleBootstrapError(error: unknown) {
+  errorLog("boot:error", {
+    message: error instanceof Error ? error.message : inspect(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
+  app.quit();
+
+}
+
+function attachRendererLogging(window: BrowserWindow, label: string) {
+  window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    const details = {
+      label,
+      level,
+      line,
+      sourceId,
+    };
+
+    if (level >= 2) {
+      logger.error({ details }, `renderer:${label}:${message}`);
+      return;
+    }
+
+    if (level === 1) {
+      logger.warn({ details }, `renderer:${label}:${message}`);
+      return;
+    }
+
+    logger.info({ details }, `renderer:${label}:${message}`);
+  });
+
+  window.webContents.on("render-process-gone", (_event, details) => {
+    errorLog(`renderer:${label}:render-process-gone`, details);
+  });
+
+  window.webContents.on("unresponsive", () => {
+    errorLog(`renderer:${label}:unresponsive`);
+  });
+
+  window.webContents.on("responsive", () => {
+    debugLog(`renderer:${label}:responsive`);
+  });
 }
 
 function createWindows() {
@@ -176,6 +215,7 @@ function createWindows() {
       preload: preloadPath,
     },
   });
+  attachRendererLogging(mainWindow, "main");
   debugLog("windows:main-created", { windowCount: BrowserWindow.getAllWindows().length });
   mainWindow.webContents.on("did-finish-load", () => {
     debugLog("windows:main-did-finish-load", { url: mainWindow?.webContents.getURL() });
@@ -227,6 +267,7 @@ function createWindows() {
       preload: preloadPath,
     },
   });
+  attachRendererLogging(overlayWindow, "overlay");
   debugLog("windows:overlay-created", { windowCount: BrowserWindow.getAllWindows().length });
   updateOverlayWindowState();
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });

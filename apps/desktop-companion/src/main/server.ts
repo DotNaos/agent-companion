@@ -44,7 +44,7 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
   app.use(cookieParser());
   app.use(express.json({ limit: "1mb" }));
   if (!env.VITE_DEV_SERVER_URL) {
-    app.use("/assets", express.static(path.resolve(process.cwd(), "apps/desktop-companion/dist/renderer/assets")));
+    app.use("/assets", express.static(path.resolve(process.cwd(), "dist/renderer/assets")));
   }
 
   app.get("/health", (_req, res) => {
@@ -583,7 +583,7 @@ function renderAppShell(env: DesktopEnv, mode: "desktop" | "overlay" | "admin" |
       return;
     }
 
-    const indexFile = path.resolve(process.cwd(), "apps/desktop-companion/dist/renderer/index.html");
+    const indexFile = path.resolve(process.cwd(), "dist/renderer/index.html");
     let html = fs.readFileSync(indexFile, "utf8");
     html = html.replace(/<html[^>]*>/, `<html lang="en" data-mode="${mode}">`);
     html = html.replace(/<body[^>]*>/, `<body data-mode="${mode}">`);
