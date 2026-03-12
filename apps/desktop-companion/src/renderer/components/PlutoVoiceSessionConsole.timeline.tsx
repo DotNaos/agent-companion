@@ -1,4 +1,5 @@
 import type {
+    OverlayBubblePreview,
     VoiceTimelineDraftEntry,
     VoiceTimelineEntry,
 } from './PlutoVoiceSessionConsole.shared.js';
@@ -15,28 +16,8 @@ export function renderVoiceTimeline(
                 </div>
             ) : (
                 entries.map((entry) => (
-                    <div
-                        key={entry.id}
-                        className={getTimelineEntryRowClass(entry)}>
-                        <div
-                            className={getTimelineEntryBubbleClass(
-                                entry,
-                                isOverlay,
-                            )}>
-                            <div className="flex items-center justify-between gap-2">
-                                <span className={timelineToneClass(entry.tone)}>
-                                    {entry.label}
-                                </span>
-                                <time className="text-[11px] text-slate-500">
-                                    {new Date(
-                                        entry.createdAt,
-                                    ).toLocaleTimeString()}
-                                </time>
-                            </div>
-                            <p className="mt-1 text-sm text-slate-100">
-                                {entry.text}
-                            </p>
-                        </div>
+                    <div key={entry.id} className={getTimelineEntryRowClass(entry)}>
+                        {renderTimelineEntry(entry, isOverlay)}
                     </div>
                 ))
             )}
@@ -59,28 +40,86 @@ export function getVoiceTimelineLayout(
     actor: VoiceTimelineEntry['actor'],
     isOverlay: boolean,
 ) {
-    const rowClass =
-        actor === 'you'
-            ? 'flex justify-end'
-            : actor === 'pluto'
-              ? 'flex justify-start'
-              : 'flex justify-center';
+    let rowClass = 'flex justify-center';
+    if (actor === 'you') {
+        rowClass = 'flex justify-end';
+    } else if (actor === 'pluto') {
+        rowClass = 'flex justify-start';
+    }
 
     const baseClass = isOverlay
         ? 'max-w-[85%] rounded-2xl px-3 py-2'
         : 'max-w-[80%] rounded-2xl px-4 py-3';
 
-    const bubbleClass =
-        actor === 'you'
-            ? `${baseClass} border border-cyan-400/30 bg-cyan-500/15 text-right`
-            : actor === 'pluto'
-              ? `${baseClass} border border-white/10 bg-white/8`
-              : `${baseClass} border border-white/8 bg-black/25 text-center`;
+    let bubbleClass = `${baseClass} border border-white/8 bg-black/25 text-center`;
+    if (actor === 'you') {
+        bubbleClass = `${baseClass} border border-cyan-400/30 bg-cyan-500/15 text-right`;
+    } else if (actor === 'pluto') {
+        bubbleClass = isOverlay
+            ? `${baseClass} border border-white/10 bg-white/8`
+            : 'w-full max-w-3xl px-1 py-1 text-left';
+    }
 
     return {
         rowClass,
         bubbleClass,
     };
+}
+
+function renderTimelineEntry(entry: VoiceTimelineEntry, isOverlay: boolean) {
+    if (entry.details) {
+        return (
+            <details
+                className={getTimelineEntryBubbleClass(entry, isOverlay)}>
+                <summary className="cursor-pointer list-none">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className={timelineToneClass(entry.tone)}>
+                            {entry.label}
+                        </span>
+                        <time className="text-[11px] text-slate-500">
+                            {new Date(entry.createdAt).toLocaleTimeString()}
+                        </time>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-100">{entry.text}</p>
+                </summary>
+                <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl border border-white/8 bg-black/25 px-3 py-2 text-xs text-slate-300">
+                    {entry.details}
+                </pre>
+            </details>
+        );
+    }
+
+    if (entry.actor === 'pluto' && !isOverlay) {
+        return (
+            <div className={getTimelineEntryBubbleClass(entry, isOverlay)}>
+                <div className="flex items-center justify-between gap-2">
+                    <span className={timelineToneClass(entry.tone)}>
+                        {entry.label}
+                    </span>
+                    <time className="text-[11px] text-slate-500">
+                        {new Date(entry.createdAt).toLocaleTimeString()}
+                    </time>
+                </div>
+                <p className="mt-2 text-base leading-7 text-slate-100">
+                    {entry.text}
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <div className={getTimelineEntryBubbleClass(entry, isOverlay)}>
+            <div className="flex items-center justify-between gap-2">
+                <span className={timelineToneClass(entry.tone)}>
+                    {entry.label}
+                </span>
+                <time className="text-[11px] text-slate-500">
+                    {new Date(entry.createdAt).toLocaleTimeString()}
+                </time>
+            </div>
+            <p className="mt-1 text-sm text-slate-100">{entry.text}</p>
+        </div>
+    );
 }
 
 export function appendVoiceTimelineEntry(
@@ -118,30 +157,50 @@ export function appendVoiceTimelineEntry(
     return [...current, nextEntry].slice(-30);
 }
 
+export function deriveLatestOverlayBubble(
+    entries: VoiceTimelineEntry[],
+): OverlayBubblePreview | null {
+    return deriveOverlayBubblePreviewHistory(entries, 1)[0] ?? null;
+}
+
+export function deriveOverlayBubblePreviewHistory(
+    entries: VoiceTimelineEntry[],
+    maxCount = 2,
+): OverlayBubblePreview[] {
+    const previews: OverlayBubblePreview[] = [];
+
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const preview = buildOverlayBubblePreview(entries[index]);
+        if (!preview) {
+            continue;
+        }
+
+        previews.push(preview);
+        if (previews.length >= maxCount) {
+            break;
+        }
+    }
+
+    return previews.reverse();
+}
+
 function findVoiceTimelineMergeTargetIndex(
     entries: VoiceTimelineEntry[],
     next: VoiceTimelineDraftEntry,
 ) {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
         const entry = entries[index];
-        if (!entry) {
+        if (!shouldInspectMergeCandidate(entry)) {
             continue;
         }
 
-        if (entry.actor === 'system') {
-            continue;
+        const turnMatch = resolveTurnBasedMergeMatch(entry, next);
+        if (turnMatch === 'match') {
+            return index;
         }
 
-        if (next.turnId !== undefined || entry.turnId !== undefined) {
-            if (entry.turnId === next.turnId && entry.actor === next.actor) {
-                return index;
-            }
-
-            if (entry.actor === next.actor) {
-                return -1;
-            }
-
-            continue;
+        if (turnMatch === 'stop') {
+            return -1;
         }
 
         if (entry.actor === next.actor && entry.label === next.label) {
@@ -152,6 +211,62 @@ function findVoiceTimelineMergeTargetIndex(
     }
 
     return -1;
+}
+
+function buildOverlayBubblePreview(
+    entry: VoiceTimelineEntry | undefined,
+): OverlayBubblePreview | null {
+    if (!entry) {
+        return null;
+    }
+
+    if (!isOverlayBubbleSource(entry)) {
+        return null;
+    }
+
+    const text = entry.text.trim();
+    if (!text) {
+        return null;
+    }
+
+    return {
+        id: entry.id,
+        actor: entry.actor,
+        title: entry.actor === 'pluto' ? 'Pluto' : entry.label,
+        text,
+        tone: entry.tone,
+    };
+}
+
+function isOverlayBubbleSource(entry: VoiceTimelineEntry) {
+    if (entry.overlayBubble !== undefined) {
+        return entry.overlayBubble;
+    }
+
+    return entry.actor === 'pluto' && entry.label === 'Pluto';
+}
+
+function shouldInspectMergeCandidate(entry: VoiceTimelineEntry | undefined) {
+    return Boolean(entry) && entry?.actor !== 'system';
+}
+
+function resolveTurnBasedMergeMatch(
+    entry: VoiceTimelineEntry,
+    next: VoiceTimelineDraftEntry,
+) {
+    if (next.turnId === undefined && entry.turnId === undefined) {
+        return 'defer' as const;
+    }
+
+    if (entry.turnId === next.turnId && entry.actor === next.actor) {
+        return 'match' as const;
+    }
+
+    if (entry.actor === next.actor) {
+        return 'stop' as const;
+    }
+
+    return 'defer' as const;
 }
 
 export function shouldMergeVoiceTimelineEntry(

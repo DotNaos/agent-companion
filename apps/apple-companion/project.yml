@@ -1,0 +1,63 @@
+name: PlutoAppleCompanion
+options:
+    createIntermediateGroups: true
+settings:
+    base:
+        SWIFT_VERSION: 6.0
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ''
+configs:
+    Debug: debug
+    Release: release
+settingGroups:
+    sharedApp:
+        PRODUCT_NAME: $(TARGET_NAME)
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+packages: {}
+targets:
+    PlutoPhone:
+        type: application
+        platform: iOS
+        deploymentTarget: '18.0'
+        sources:
+            - path: Shared
+            - path: iPhone
+        settings:
+            groups:
+                - sharedApp
+            base:
+                PRODUCT_BUNDLE_IDENTIFIER: com.dotnaos.agentcompanion.phone
+                INFOPLIST_KEY_CFBundleDisplayName: Pluto
+                INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+                INFOPLIST_KEY_UILaunchScreen_Generation: YES
+                INFOPLIST_KEY_NSLocalNetworkUsageDescription: Pluto on iPhone connects to your laptop companion on the local network.
+                INFOPLIST_KEY_NSCameraUsageDescription: Pluto scans pairing QR codes from your laptop screen.
+                INFOPLIST_KEY_NSMicrophoneUsageDescription: Pluto needs microphone access for voice chat.
+                INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Pluto may display speech transcripts for conversation history.
+                INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads: YES
+        scheme:
+            testTargets: []
+
+    PlutoWatch:
+        type: application
+        platform: watchOS
+        deploymentTarget: '26.0'
+        sources:
+            - path: Shared
+            - path: Watch
+        settings:
+            groups:
+                - sharedApp
+            base:
+                GENERATE_INFOPLIST_FILE: NO
+                INFOPLIST_FILE: Watch/App/Info.plist
+                PRODUCT_BUNDLE_IDENTIFIER: com.dotnaos.agentcompanion.phone.watch
+                INFOPLIST_KEY_CFBundleDisplayName: 'Pluto Watch'
+                INFOPLIST_KEY_WKCompanionAppBundleIdentifier: com.dotnaos.agentcompanion.phone
+                INFOPLIST_KEY_WKApplication: YES
+                INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads: YES
+                INFOPLIST_KEY_NSMicrophoneUsageDescription: Pluto needs microphone access for voice chat from Apple Watch.
+        scheme:
+            testTargets: []

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
     appendVoiceTimelineEntry,
     createPcmChunkBlob,
+    deriveLatestOverlayBubble,
+    deriveOverlayBubblePreviewHistory,
     encodePcm16Chunk,
     getPlutoPcmMimeType,
     getVoiceConsolePrimaryAction,
@@ -90,6 +92,13 @@ describe('getVoiceTimelineLayout', () => {
             rowClass: 'flex justify-start',
             bubbleClass:
                 'max-w-[85%] rounded-2xl px-3 py-2 border border-white/10 bg-white/8',
+        });
+    });
+
+    it('renders Pluto replies as transcript blocks in the full chat', () => {
+        expect(getVoiceTimelineLayout('pluto', false)).toEqual({
+            rowClass: 'flex justify-start',
+            bubbleClass: 'w-full max-w-3xl px-1 py-1 text-left',
         });
     });
 
@@ -388,6 +397,155 @@ describe('voice transcript streaming', () => {
         expect(timeline).toHaveLength(2);
         expect(timeline[0]?.text).toBe('rede einfach mit dir.');
         expect(timeline[1]?.text).toBe('Pluto is listening.');
+    });
+});
+
+describe('deriveLatestOverlayBubble', () => {
+    it('shows only spoken Pluto text over the avatar', () => {
+        expect(
+            deriveLatestOverlayBubble([
+                {
+                    id: '1',
+                    actor: 'pluto',
+                    label: 'Codex',
+                    text: 'Womit kann ich helfen?',
+                    tone: 'neutral',
+                    createdAt: '2026-03-08T22:57:56.000Z',
+                    overlayBubble: false,
+                },
+                {
+                    id: '2',
+                    actor: 'you',
+                    label: 'You',
+                    text: 'Kannst du moodle --help ausführen?',
+                    tone: 'accent',
+                    createdAt: '2026-03-08T22:57:57.000Z',
+                },
+                {
+                    id: '3',
+                    actor: 'pluto',
+                    label: 'Pluto',
+                    text: 'Ich prüfe das jetzt für dich.',
+                    tone: 'neutral',
+                    createdAt: '2026-03-08T22:57:58.000Z',
+                    overlayBubble: true,
+                },
+            ]),
+        ).toEqual({
+            id: '3',
+            actor: 'pluto',
+            title: 'Pluto',
+            text: 'Ich prüfe das jetzt für dich.',
+            tone: 'neutral',
+        });
+    });
+
+    it('ignores Codex-only text when no spoken Pluto text exists', () => {
+        expect(
+            deriveLatestOverlayBubble([
+                {
+                    id: '1',
+                    actor: 'you',
+                    label: 'You',
+                    text: 'Kannst du moodle --help ausführen?',
+                    tone: 'accent',
+                    createdAt: '2026-03-08T22:57:57.000Z',
+                },
+                {
+                    id: '2',
+                    actor: 'pluto',
+                    label: 'Codex',
+                    text: 'Ich kann nicht beliebige Befehle ausführen.',
+                    tone: 'neutral',
+                    createdAt: '2026-03-08T22:57:58.000Z',
+                    overlayBubble: false,
+                },
+            ]),
+        ).toBeNull();
+    });
+
+    it('ignores system notices when no spoken Pluto text exists', () => {
+        expect(
+            deriveLatestOverlayBubble([
+                {
+                    id: '1',
+                    actor: 'you',
+                    label: 'You',
+                    text: 'Starte etwas',
+                    tone: 'accent',
+                    createdAt: '2026-03-08T22:57:57.000Z',
+                },
+                {
+                    id: '2',
+                    actor: 'system',
+                    label: 'Approval',
+                    text: 'Approval denied for run_command. Pluto cannot continue with that action.',
+                    tone: 'error',
+                    createdAt: '2026-03-08T22:57:58.000Z',
+                },
+            ]),
+        ).toBeNull();
+    });
+
+    it('returns the latest two spoken Pluto previews in chronological order', () => {
+        expect(
+            deriveOverlayBubblePreviewHistory([
+                {
+                    id: '1',
+                    actor: 'pluto',
+                    label: 'Codex',
+                    text: 'Hallo!',
+                    tone: 'neutral',
+                    createdAt: '2026-03-08T22:57:56.000Z',
+                    overlayBubble: false,
+                },
+                {
+                    id: '2',
+                    actor: 'you',
+                    label: 'You',
+                    text: 'Kannst du das prüfen?',
+                    tone: 'accent',
+                    createdAt: '2026-03-08T22:57:57.000Z',
+                },
+                {
+                    id: '3',
+                    actor: 'pluto',
+                    label: 'Pluto',
+                    text: 'Ja, ich schaue gerade nach.',
+                    tone: 'neutral',
+                    createdAt: '2026-03-08T22:57:58.000Z',
+                    overlayBubble: true,
+                },
+                {
+                    id: '4',
+                    actor: 'pluto',
+                    label: 'Pluto',
+                    text: 'Der naechste Termin ist morgen um acht.',
+                    tone: 'neutral',
+                    createdAt: '2026-03-08T22:57:59.000Z',
+                    overlayBubble: true,
+                },
+            ]),
+        ).toEqual([
+            {
+                id: '3',
+                actor: 'pluto',
+                title: 'Pluto',
+                text: 'Ja, ich schaue gerade nach.',
+                tone: 'neutral',
+            },
+            {
+                id: '4',
+                actor: 'pluto',
+                title: 'Pluto',
+                text: 'Der naechste Termin ist morgen um acht.',
+                tone: 'neutral',
+            },
+        ]);
+    });
+
+    it('returns null when there is no non-user entry to mirror', () => {
+        expect(deriveLatestOverlayBubble([])).toBeNull();
     });
 });
 

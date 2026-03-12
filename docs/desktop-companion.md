@@ -60,3 +60,7 @@ The dashboard and overlay surface:
 ## Relationship To The Remote Admin UI
 
 The remote admin UI is not a separate product. It is the same local control surface served by the desktop companion on `127.0.0.1:4318` and exposed through the tunnel for secondary-device access.
+
+## Pluto Voice Notes
+
+Working notes for the Codex-first Pluto voice architecture live in [docs/pluto-codex-voice-notes.md](/Users/oli/projects/agent-companion/docs/pluto-codex-voice-notes.md).

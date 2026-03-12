@@ -119,6 +119,19 @@ describe("desktop admin server", () => {
   });
 
   it("creates pairing codes and exchanges them for mobile access tokens", async () => {
+    vi.spyOn(os, "networkInterfaces").mockReturnValue({
+      en0: [
+        {
+          address: "192.168.1.20",
+          netmask: "255.255.255.0",
+          family: "IPv4",
+          mac: "00:00:00:00:00:00",
+          internal: false,
+          cidr: "192.168.1.20/24",
+        },
+      ],
+    });
+
     const { app } = createTestServer({
       allowedOrigins: ["https://admin.example.com"],
     });
@@ -129,6 +142,15 @@ describe("desktop admin server", () => {
 
     expect(pairingResponse.status).toBe(200);
     expect(pairingResponse.body.code).toMatch(/^[A-F0-9]{8}$/);
+    expect(pairingResponse.body.serverBaseUrl).toMatch(/^http:\/\/192\.168\.1\.20:\d+$/);
+    expect(pairingResponse.body.serverBaseUrls[0]).toMatch(/^http:\/\/192\.168\.1\.20:\d+$/);
+    expect(pairingResponse.body.serverBaseUrls).toContain("https://admin.example.com");
+    expect(pairingResponse.body.pairingUrl).toContain(
+      `server=${encodeURIComponent(pairingResponse.body.serverBaseUrl)}`,
+    );
+    expect(pairingResponse.body.pairingUrl).toContain(
+      `server=${encodeURIComponent("https://admin.example.com")}`,
+    );
 
     const exchangeResponse = await request(app)
       .post("/api/mobile/auth/exchange")

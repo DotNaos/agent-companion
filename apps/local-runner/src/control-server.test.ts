@@ -215,6 +215,8 @@ function createContext() {
     LOG_LEVEL: "error",
     GEMINI_API_KEY: "",
     PLUTO_MODEL: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+    PLUTO_CODEX_MODEL: "gpt-5.4",
+    PLUTO_CODEX_WORKING_DIRECTORY: process.cwd(),
     PLUTO_VOICE_NAME: "Achird",
     LOCAL_RUNNER_PORT: 4317,
     DESKTOP_SERVER_PORT: 4318,

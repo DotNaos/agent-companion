@@ -9,8 +9,9 @@ describe("buildPlutoToolDeclarations", () => {
   it("exports the shared runner tools as Gemini function declarations", () => {
     const declarations = buildPlutoToolDeclarations();
 
-    expect(declarations).toHaveLength(TOOL_NAMES.length);
-    expect(declarations.map((entry) => entry.name)).toEqual(TOOL_NAMES);
+    expect(declarations.map((entry) => entry.name)).toEqual(
+      expect.arrayContaining([...TOOL_NAMES, "ask_agent", "agent_delegate", "remember_memory", "search_memory", "list_skills", "read_skill"]),
+    );
     expect(declarations.find((entry) => entry.name === "read_file")).toMatchObject({
       description: expect.stringContaining("Read a file"),
       parametersJsonSchema: {
@@ -59,6 +60,42 @@ describe("executePlutoFunctionCalls", () => {
         },
       },
     ]);
+  });
+
+  it("normalizes legacy Pluto run_command payloads before execution", async () => {
+    const executeTool = vi.fn(async () => ({
+      ok: true,
+      data: {
+        exitCode: 0,
+        stdout: "{}",
+        stderr: "",
+        approvedViaRule: "moodle-cli",
+      },
+    }));
+
+    await executePlutoFunctionCalls(
+      [
+        {
+          id: "call-legacy-run-command",
+          name: "run_command",
+          args: {
+            command: "./moodle list timetable --json",
+            path: "/Users/oli/projects/moodle/moodle-cli",
+          },
+        },
+      ],
+      executeTool,
+    );
+
+    expect(executeTool).toHaveBeenCalledWith(
+      "run_command",
+      {
+        command: ["./moodle", "list", "timetable", "--json"],
+        path: "/Users/oli/projects/moodle/moodle-cli",
+        workingDirectory: "/Users/oli/projects/moodle/moodle-cli",
+      },
+      { toolCallId: "call-legacy-run-command" },
+    );
   });
 
   it("returns an error envelope for unknown tools without calling the executor", async () => {

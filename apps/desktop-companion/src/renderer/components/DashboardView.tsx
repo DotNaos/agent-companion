@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 import type { Bootstrap } from '../app-shared.js';
 import { formatRelativeTime, formatSessionStatus } from '../app-shared.js';
 import { cn } from '../lib/utils.js';
+import { MobilePairingCard } from './MobilePairingCard.js';
 import { PlutoVoiceSessionConsole } from './PlutoVoiceSessionConsole.js';
 import { Badge } from './ui/badge.js';
 import { Button } from './ui/button.js';
@@ -173,6 +174,8 @@ export function DashboardView({
                     </div>
                 )}
             </DashboardNavCard>
+
+            <MobilePairingCard apiBase={apiBase} desktopToken={desktopToken} />
 
             <Card className="border-white/10 bg-white/5 md:col-span-3">
                 <CardHeader className="pb-3">

@@ -17,6 +17,7 @@ function createHarness() {
     const enqueueIncomingAudioChunk = vi.fn();
     const markOutputTurnComplete = vi.fn();
     const publishError = vi.fn();
+    const setRemoteSpeechActive = vi.fn();
     const streamTerminalEventRef = {
         current: null as 'error' | 'closed' | null,
     };
@@ -32,6 +33,7 @@ function createHarness() {
         enqueueIncomingAudioChunk,
         markOutputTurnComplete,
         publishError,
+        setRemoteSpeechActive,
         streamTerminalEventRef,
     };
 }
@@ -51,14 +53,69 @@ describe('handlePlutoStreamEvent', () => {
         });
 
         expect(harness.setActiveStatusMessage).toHaveBeenCalledWith(
-            'Pluto uses run_command…',
+            'Codex uses run_command…',
         );
         expect(harness.timeline).toEqual([
             {
                 actor: 'system',
                 label: 'Tool',
-                text: 'Calling run_command: /Users/oli $ moodle list timetable --json',
+                text: 'Calling run_command',
+                details: '/Users/oli $ moodle list timetable --json',
                 tone: 'accent',
+            },
+        ]);
+    });
+
+    it('renders Codex reasoning in the chat timeline only', () => {
+        const harness = createHarness();
+
+        handlePlutoStreamEvent({
+            event: {
+                type: 'tool_result',
+                toolName: 'codex_reasoning',
+                summary: 'I should inspect the existing Moodle CLI skill before acting.',
+                ok: true,
+                toolCallId: 'reason-1',
+            },
+            ...harness,
+        });
+
+        expect(harness.timeline).toEqual([
+            {
+                actor: 'system',
+                label: 'Reasoning',
+                text: 'I should inspect the existing Moodle CLI skill before acting.',
+                tone: 'neutral',
+                overlayBubble: false,
+            },
+        ]);
+    });
+
+    it('renders spoken Pluto output separately from the Codex transcript', () => {
+        const harness = createHarness();
+
+        handlePlutoStreamEvent({
+            event: {
+                type: 'tool_result',
+                toolName: 'speak_to_user',
+                summary: 'Ich habe den Stundenplan geladen und lese ihn dir jetzt vor.',
+                ok: true,
+                toolCallId: 'speech-1',
+            },
+            ...harness,
+        });
+
+        expect(harness.setActiveStatusMessage).toHaveBeenCalledWith(
+            'Pluto is speaking…',
+        );
+        expect(harness.setRemoteSpeechActive).toHaveBeenCalledWith(true);
+        expect(harness.timeline).toEqual([
+            {
+                actor: 'pluto',
+                label: 'Pluto',
+                text: 'Ich habe den Stundenplan geladen und lese ihn dir jetzt vor.',
+                tone: 'neutral',
+                overlayBubble: true,
             },
         ]);
     });
@@ -101,8 +158,9 @@ describe('handlePlutoStreamEvent', () => {
         });
 
         expect(harness.stopPlayback).toHaveBeenCalledTimes(1);
+        expect(harness.setRemoteSpeechActive).toHaveBeenCalledWith(false);
         expect(harness.setActiveStatusMessage).toHaveBeenCalledWith(
-            'Pluto was interrupted.',
+            'The current response was interrupted.',
         );
     });
 });

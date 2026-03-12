@@ -18,13 +18,13 @@ export const plutoVoiceSessionHistoryPersistedEventSchema = z.discriminatedUnion
   }),
   z.object({
     type: z.literal("tool_call"),
-    toolName: toolNameSchema,
+    toolName: z.string().min(1),
     summary: z.string().min(1),
     toolCallId: z.string().min(1).nullable().default(null),
   }),
   z.object({
     type: z.literal("tool_result"),
-    toolName: toolNameSchema,
+    toolName: z.string().min(1),
     summary: z.string().min(1),
     ok: z.boolean(),
     toolCallId: z.string().min(1).nullable().default(null),

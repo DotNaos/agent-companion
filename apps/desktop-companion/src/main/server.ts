@@ -13,6 +13,7 @@ import cookieParser from "cookie-parser";
 import express, { type Request, type Response } from "express";
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import {
@@ -115,8 +116,8 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
   app.get("/admin", renderAppShell(env, "admin"));
   app.get("/login", renderAppShell(env, "login"));
 
-  app.post("/api/desktop/mobile/pairing-code", requireDesktopToken(desktopToken), (_req, res) => {
-    res.json(mobileAuth.createPairingCode());
+  app.post("/api/desktop/mobile/pairing-code", requireDesktopToken(desktopToken), (req, res) => {
+    res.json(buildMobilePairingCodeResponse(req, env, mobileAuth));
   });
 
   app.get("/api/desktop/bootstrap", requireDesktopToken(desktopToken), (_req, res) => {
@@ -305,8 +306,8 @@ export function createDesktopServer(options: CreateDesktopServerOptions) {
     res.status(501).json({ error: "Runner lifecycle is managed externally in this setup." });
   });
 
-  app.post("/api/admin/mobile/pairing-code", (_req, res) => {
-    res.json(mobileAuth.createPairingCode());
+  app.post("/api/admin/mobile/pairing-code", (req, res) => {
+    res.json(buildMobilePairingCodeResponse(req, env, mobileAuth));
   });
 
   app.use("/api/mobile", requireMobileAccess(mobileAuth));
@@ -598,6 +599,126 @@ function buildMobileBootstrap(
       publicMcpUrl: publicUrls.mcpUrl,
     },
   });
+}
+
+function buildMobilePairingCodeResponse(
+  req: Request,
+  env: DesktopEnv,
+  mobileAuth: MobileAuthManager,
+) {
+  const base = mobileAuth.createPairingCode();
+  const serverBaseUrls = getMobilePairingServerBaseUrls(req, env);
+  const serverBaseUrl = serverBaseUrls[0] ?? null;
+  const pairingUrl = buildMobilePairingUrl(base.code, serverBaseUrls);
+
+  return {
+    ...base,
+    serverBaseUrl,
+    serverBaseUrls,
+    pairingUrl,
+  };
+}
+
+function getMobilePairingServerBaseUrls(req: Request, env: DesktopEnv) {
+  const publicUrls = getPublicUrls(env);
+  const localCandidates = new Set<string>();
+  const publicCandidates = new Set<string>();
+  const requestOrigin = getRequestOrigin(req);
+  const preferredPublicOrigin = toOriginOrNull(publicUrls.adminUrl);
+
+  if (requestOrigin && !isLoopbackOrigin(requestOrigin)) {
+    publicCandidates.add(requestOrigin);
+  }
+
+  const protocol = requestOrigin?.startsWith("https://") ? "https" : "http";
+  const port = getRequestPort(req, protocol === "https" ? 443 : 80);
+  for (const address of getLocalNetworkAddresses()) {
+    const portSuffix = shouldIncludePort(protocol, port) ? `:${port}` : "";
+    localCandidates.add(`${protocol}://${address}${portSuffix}`);
+  }
+
+  if (preferredPublicOrigin) {
+    publicCandidates.add(preferredPublicOrigin);
+  }
+
+  return [...localCandidates, ...publicCandidates];
+}
+
+function buildMobilePairingUrl(code: string, serverBaseUrls: string[]) {
+  if (serverBaseUrls.length === 0) {
+    return null;
+  }
+
+  const query = new URLSearchParams();
+  query.set("code", code);
+  for (const server of serverBaseUrls) {
+    query.append("server", server);
+  }
+
+  return `agentcompanion://pair?${query.toString()}`;
+}
+
+function getRequestOrigin(req: Request) {
+  const host = req.get("host");
+  if (!host) {
+    return null;
+  }
+  const forwardedProto = req.get("x-forwarded-proto");
+  const protocol = forwardedProto?.split(",")[0]?.trim() || req.protocol || "http";
+  return `${protocol}://${host}`;
+}
+
+function getRequestPort(req: Request, fallback: number) {
+  const host = req.get("host");
+  if (!host) {
+    return fallback;
+  }
+
+  if (host.startsWith("[")) {
+    const end = host.lastIndexOf("]:");
+    if (end >= 0) {
+      return Number.parseInt(host.slice(end + 2), 10) || fallback;
+    }
+    return fallback;
+  }
+
+  const segments = host.split(":");
+  if (segments.length >= 2) {
+    return Number.parseInt(segments.at(-1) ?? "", 10) || fallback;
+  }
+  return fallback;
+}
+
+function shouldIncludePort(protocol: "http" | "https", port: number) {
+  return (protocol === "http" && port !== 80) || (protocol === "https" && port !== 443);
+}
+
+function getLocalNetworkAddresses() {
+  return Object.values(os.networkInterfaces())
+    .flatMap((entries) => entries ?? [])
+    .filter((entry) => entry.family === "IPv4" && !entry.internal)
+    .map((entry) => entry.address)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function toOriginOrNull(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackOrigin(value: string) {
+  try {
+    const { hostname } = new URL(value);
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+  } catch {
+    return false;
+  }
 }
 
 function getPublicUrls(env: DesktopEnv) {

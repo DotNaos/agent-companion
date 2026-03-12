@@ -18,6 +18,9 @@ export const mobileDeviceStoreSchema = z.object({
 export const mobilePairingCodeCreateOutputSchema = z.object({
   code: z.string().min(1),
   expiresAt: z.string(),
+  serverBaseUrl: z.string().nullable().default(null),
+  serverBaseUrls: z.array(z.string()).default([]),
+  pairingUrl: z.string().nullable().default(null),
 });
 
 export const mobileAuthExchangeInputSchema = z.object({

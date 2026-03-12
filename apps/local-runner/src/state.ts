@@ -122,13 +122,20 @@ export class RunnerState {
   private lastSeenAt: string | null = null;
 
   constructor(private readonly env: RunnerEnv) {
-    this.plutoService = new PlutoService(env, async (toolName, payload, context) =>
-      this.handlePlutoVoiceToolRequest(
-        context?.sessionId ?? null,
-        context?.toolCallId ?? null,
-        toolName,
-        payload,
-      ),
+    this.plutoService = new PlutoService(
+      env,
+      async (
+        toolName: ToolName,
+        payload: unknown,
+        context?: { sessionId?: string; toolCallId?: string | null },
+      ) =>
+        this.handlePlutoVoiceToolRequest(
+          context?.sessionId ?? null,
+          context?.toolCallId ?? null,
+          toolName,
+          payload,
+        ),
+      () => !this.getConfig().pluto.muted,
     );
     this.configStore = new FileBackedStore(
       env.CONFIG_PATH,

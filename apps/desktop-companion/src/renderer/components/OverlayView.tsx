@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     formatApprovalPreview,
     getVisiblePlutoMessage,
@@ -14,6 +14,10 @@ import {
     setPlutoSpeakingState,
 } from './PlutoAvatar.js';
 import { PlutoVoiceSessionConsole } from './PlutoVoiceSessionConsole.js';
+import type {
+    OverlayBubblePreview,
+    OverlayConversationActivity,
+} from './PlutoVoiceSessionConsole.shared.js';
 
 type OverlayViewProps = Readonly<{
     bootstrap: Bootstrap | null;
@@ -40,6 +44,18 @@ export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [msgStartTime, setMsgStartTime] = useState(0);
     const [lastMsgId, setLastMsgId] = useState<string | null>(null);
+    const [voicePreviewStartTime, setVoicePreviewStartTime] = useState(0);
+    const [lastVoicePreviewId, setLastVoicePreviewId] = useState<string | null>(
+        null,
+    );
+    const [voiceOverlayPreviews, setVoiceOverlayPreviews] = useState<
+        OverlayBubblePreview[]
+    >([]);
+    const [voiceOverlayActivity, setVoiceOverlayActivity] =
+        useState<OverlayConversationActivity>({
+            isSpeaking: false,
+            isToolCalling: false,
+        });
     const approvalCount = bootstrap?.runner.approvals.length ?? 0;
     const primaryApproval = bootstrap?.runner.approvals[0] ?? null;
     const activePlutoMessage = getVisiblePlutoMessage(
@@ -79,6 +95,28 @@ export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
         (latestActivity?.type === 'tool_call' && recentAgeMs < 1_600);
     const lastPlayedMessageRef = useRef<string | null>(null);
 
+    const handleOverlayPreviewChange = useCallback(
+        (nextPreviews: OverlayBubblePreview[]) => {
+            setVoiceOverlayPreviews((current) =>
+                areOverlayPreviewsEqual(current, nextPreviews)
+                    ? current
+                    : nextPreviews,
+            );
+        },
+        [],
+    );
+
+    const handleOverlayActivityChange = useCallback(
+        (nextActivity: OverlayConversationActivity) => {
+            setVoiceOverlayActivity((current) =>
+                areOverlayActivitiesEqual(current, nextActivity)
+                    ? current
+                    : nextActivity,
+            );
+        },
+        [],
+    );
+
     useEffect(() => {
         const syncSelection = () => {
             setVoiceSelection(readPlutoVoiceSelection());
@@ -97,6 +135,24 @@ export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
         }
     }, [activePlutoMessage?.id, lastMsgId]);
 
+    useEffect(() => {
+        if (!voiceSelection.sessionId) {
+            setVoiceOverlayPreviews([]);
+            setVoiceOverlayActivity({
+                isSpeaking: false,
+                isToolCalling: false,
+            });
+        }
+    }, [voiceSelection.sessionId]);
+
+    useEffect(() => {
+        const latestPreview = voiceOverlayPreviews.at(-1) ?? null;
+        if (latestPreview?.id && latestPreview.id !== lastVoicePreviewId) {
+            setLastVoicePreviewId(latestPreview.id);
+            setVoicePreviewStartTime(Date.now());
+        }
+    }, [lastVoicePreviewId, voiceOverlayPreviews]);
+
     const streamProgressChars =
         activePlutoMessage && msgStartTime
             ? Math.floor((frameTime - msgStartTime) / 25)
@@ -108,7 +164,9 @@ export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
     const shouldAnimateOverlayFrame =
         Boolean(activePlutoMessage) ||
         isSpeaking ||
+        voiceOverlayActivity.isSpeaking ||
         isProcessing ||
+        voiceOverlayActivity.isToolCalling ||
         approvalCount > 0 ||
         cursor.near;
 
@@ -248,6 +306,51 @@ export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
                 <p>{streamedText}</p>
             </div>
         );
+    } else if (voiceOverlayPreviews.length > 0) {
+        bubbleContent = (
+            <div className="pet-avatar-dialog-stack" aria-hidden="true">
+                {voiceOverlayPreviews.map((preview, index) => (
+                    <div
+                        key={preview.id}
+                        className={[
+                            'pet-bubble',
+                            'passive',
+                            'pet-avatar-dialog-bubble',
+                            `pet-avatar-dialog-${preview.actor}`,
+                            preview.tone === 'error'
+                                ? 'pet-avatar-dialog-error'
+                                : '',
+                            index < voiceOverlayPreviews.length - 1
+                                ? 'pet-avatar-dialog-history'
+                                : 'pet-avatar-dialog-current',
+                        ]
+                            .filter(Boolean)
+                            .join(' ')}>
+                        <div className="pet-bubble-header">
+                            <strong>{preview.title}</strong>
+                        </div>
+                        <p>
+                            {index === voiceOverlayPreviews.length - 1 &&
+                            preview.actor === 'pluto' &&
+                            voiceOverlayActivity.isSpeaking &&
+                            voicePreviewStartTime > 0
+                                ? preview.text.slice(
+                                      0,
+                                      Math.max(
+                                          1,
+                                          Math.floor(
+                                              (frameTime -
+                                                  voicePreviewStartTime) /
+                                                  25,
+                                          ),
+                                      ),
+                                  )
+                                : preview.text}
+                        </p>
+                    </div>
+                ))}
+            </div>
+        );
     }
 
     return (
@@ -266,6 +369,10 @@ export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
                             clientId={voiceSelection.clientId}
                             sessions={plutoVoiceSessions}
                             variant="overlay"
+                            onOverlayPreviewChange={handleOverlayPreviewChange}
+                            onOverlayActivityChange={
+                                handleOverlayActivityChange
+                            }
                             onError={() => undefined}
                             onInfo={() => undefined}
                         />
@@ -281,8 +388,12 @@ export function OverlayView({ bootstrap, desktopToken }: OverlayViewProps) {
                     <PlutoAvatar
                         avatarState={avatarState}
                         cursor={cursor}
-                        isProcessing={isProcessing}
-                        isSpeaking={isSpeaking}
+                        isProcessing={
+                            isProcessing || voiceOverlayActivity.isToolCalling
+                        }
+                        isSpeaking={
+                            isSpeaking || voiceOverlayActivity.isSpeaking
+                        }
                         curious={curious}
                         phase={phase}
                         blink={buildBlink(phase, avatarState, curious)}
@@ -440,4 +551,38 @@ function bindAudioAnalyser(
             volumeTimer = null;
         }
     });
+}
+
+function areOverlayPreviewsEqual(
+    left: OverlayBubblePreview[],
+    right: OverlayBubblePreview[],
+) {
+    if (left === right) {
+        return true;
+    }
+
+    if (left.length !== right.length) {
+        return false;
+    }
+
+    return left.every((preview, index) => {
+        const next = right[index];
+        return (
+            preview.id === next?.id &&
+            preview.actor === next?.actor &&
+            preview.title === next?.title &&
+            preview.text === next?.text &&
+            preview.tone === next?.tone
+        );
+    });
+}
+
+function areOverlayActivitiesEqual(
+    left: OverlayConversationActivity,
+    right: OverlayConversationActivity,
+) {
+    return (
+        left.isSpeaking === right.isSpeaking &&
+        left.isToolCalling === right.isToolCalling
+    );
 }

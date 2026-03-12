@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NLP Aufgabenblatt II erklärt</title>
+  <style>
+    :root {
+      --paper: #f6f0e5;
+      --ink: #1f1b18;
+      --muted: #665f58;
+      --card: rgba(255, 251, 245, 0.84);
+      --line: rgba(31, 27, 24, 0.12);
+      --accent: #d26027;
+      --accent-soft: #ffe0cc;
+      --teal: #0b6e74;
+      --teal-soft: #d8f0ef;
+      --shadow: 0 18px 60px rgba(38, 28, 18, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: Avenir Next, Avenir, Helvetica Neue, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(210, 96, 39, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(11, 110, 116, 0.16), transparent 24%),
+        linear-gradient(180deg, #fdf8f1 0%, var(--paper) 100%);
+    }
+
+    .grain {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.16;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.5), rgba(255,255,255,0.5)),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='.25'/%3E%3C/svg%3E");
+      mix-blend-mode: multiply;
+    }
+
+    main {
+      width: min(1120px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 36px;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,245,237,0.95));
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -50px;
+      top: -40px;
+      width: 220px;
+      height: 220px;
+      border-radius: 32px;
+      background: linear-gradient(145deg, var(--accent), #f8a25c);
+      transform: rotate(12deg);
+      opacity: 0.16;
+    }
+
+    .eyebrow,
+    .mini {
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    h1, h2, h3 {
+      font-family: Iowan Old Style, Palatino Linotype, Book Antiqua, serif;
+      margin: 0;
+      font-weight: 700;
+    }
+
+    h1 {
+      font-size: clamp(2.4rem, 5vw, 4.8rem);
+      line-height: 0.95;
+      max-width: 760px;
+      margin-top: 12px;
+    }
+
+    .hero p {
+      max-width: 680px;
+      font-size: 1.05rem;
+      line-height: 1.65;
+      color: #403933;
+    }
+
+    .hero-grid,
+    .task-grid,
+    .cheat-grid {
+      display: grid;
+      gap: 18px;
+      margin-top: 24px;
+    }
+
+    .hero-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+    .task-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+    .cheat-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+    .pill,
+    .card,
+    .note {
+      border: 1px solid var(--line);
+      background: var(--card);
+      backdrop-filter: blur(10px);
+      box-shadow: var(--shadow);
+    }
+
+    .pill {
+      padding: 14px 16px;
+      border-radius: 18px;
+    }
+
+    .pill strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 1.15rem;
+    }
+
+    .section-title {
+      margin: 34px 0 16px;
+      font-size: clamp(1.8rem, 3vw, 2.7rem);
+    }
+
+    .card {
+      padding: 24px;
+      border-radius: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: auto 18px 18px auto;
+      width: 72px;
+      height: 72px;
+      border-radius: 20px;
+      opacity: 0.14;
+      background: linear-gradient(135deg, var(--accent), transparent);
+    }
+
+    .card h3 {
+      font-size: 1.65rem;
+      margin-top: 10px;
+      margin-bottom: 12px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #77310c;
+      font-size: 0.84rem;
+      font-weight: 600;
+    }
+
+    .teal { background: var(--teal-soft); color: #0b4b4e; }
+
+    ul {
+      padding-left: 20px;
+      line-height: 1.6;
+      color: #3c3631;
+    }
+
+    .formula {
+      margin: 16px 0;
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: #fffdf9;
+      border: 1px dashed rgba(31, 27, 24, 0.18);
+      font-size: 1.05rem;
+      overflow-x: auto;
+    }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .diagram-row {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      margin: 18px 0 24px;
+    }
+
+    .diagram {
+      padding: 16px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(31, 27, 24, 0.08);
+    }
+
+    .diagram svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      margin-top: 8px;
+    }
+
+    .diagram-title {
+      font-size: 0.95rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 38px 1fr;
+      gap: 12px;
+      align-items: start;
+      padding: 12px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.72);
+      border: 1px solid rgba(31, 27, 24, 0.08);
+    }
+
+    .step b {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 0.92rem;
+    }
+
+    .note {
+      padding: 18px;
+      border-radius: 20px;
+      margin-top: 18px;
+    }
+
+    .note strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 0.95rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .footer {
+      margin-top: 28px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    @media (max-width: 720px) {
+      .hero { padding: 24px; }
+      .card { padding: 20px; }
+      h1 { max-width: 100%; }
+    }
+  </style>
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+</head>
+<body>
+  <div class="grain"></div>
+  <main>
+    <section class="hero">
+      <div class="eyebrow">NLP Aufgabenblatt II</div>
+      <h1>Was du machen musst, ohne PDF-Chaos.</h1>
+      <p>
+        Das Blatt besteht aus drei Blöcken. Du musst nichts Kompliziertes erraten:
+        erst Vektor-Ähnlichkeit rechnen, dann TF-IDF berechnen, danach Wortpaare
+        einordnen und am Ende eine kurze Konzeptfrage beantworten.
+      </p>
+      <div class="hero-grid">
+        <div class="pill">
+          <div class="mini">Teil 1</div>
+          <strong>Cosine Similarity</strong>
+          Von Hand rechnen und interpretieren.
+        </div>
+        <div class="pill">
+          <div class="mini">Teil 2</div>
+          <strong>TF-IDF</strong>
+          Gewicht eines Wortes in 3 Dokumenten.
+        </div>
+        <div class="pill">
+          <div class="mini">Teil 3</div>
+          <strong>Ähnlich vs. verwandt</strong>
+          Wortpaare klassifizieren und diskutieren.
+        </div>
+      </div>
+    </section>
+
+    <h2 class="section-title">Die 3 Aufgaben</h2>
+    <section class="task-grid">
+      <article class="card">
+        <span class="tag">Rechnen + Begründen</span>
+        <h3>1. Cosine Similarity</h3>
+        <p>Du bekommst zwei Vektoren und sollst zeigen, wie ähnlich sie sind.</p>
+        <div class="formula">\[ \cos(v_1, v_2)=\frac{v_1 \cdot v_2}{\lVert v_1 \rVert \cdot \lVert v_2 \rVert} \]</div>
+        <div class="diagram-row">
+          <div class="diagram">
+            <div class="diagram-title">Vektor-Idee</div>
+            <svg viewBox="0 0 260 160" aria-label="Vektordiagramm">
+              <line x1="28" y1="132" x2="232" y2="132" stroke="#7a726a" stroke-width="2"/>
+              <line x1="28" y1="132" x2="28" y2="24" stroke="#7a726a" stroke-width="2"/>
+              <path d="M28 132 L126 56" stroke="#d26027" stroke-width="6" fill="none" stroke-linecap="round"/>
+              <path d="M28 132 L188 74" stroke="#0b6e74" stroke-width="6" fill="none" stroke-linecap="round"/>
+              <circle cx="126" cy="56" r="6" fill="#d26027"/>
+              <circle cx="188" cy="74" r="6" fill="#0b6e74"/>
+              <text x="132" y="50" fill="#d26027" font-size="14">v₁</text>
+              <text x="194" y="68" fill="#0b6e74" font-size="14">v₂</text>
+              <text x="34" y="150" fill="#665f58" font-size="12">kleiner Winkel = höhere Ähnlichkeit</text>
+            </svg>
+          </div>
+        </div>
+        <div class="steps">
+          <div class="step"><b>1</b><div>Berechne das <strong>Skalarprodukt</strong> der beiden Vektoren.</div></div>
+          <div class="step"><b>2</b><div>Berechne die <strong>Norm</strong> von jedem Vektor.</div></div>
+          <div class="step"><b>3</b><div>Setze die Werte in die Formel ein.</div></div>
+          <div class="step"><b>4</b><div>Interpretiere das Ergebnis: nahe bei <strong>1</strong> bedeutet sehr ähnlich.</div></div>
+        </div>
+        <div class="note">
+          <strong>Merke</strong>
+          Du sollst hier nicht nur rechnen, sondern kurz erklären, was der Wert bedeutet.
+        </div>
+      </article>
+
+      <article class="card">
+        <span class="tag teal">Schrittweise berechnen</span>
+        <h3>2. TF-IDF für „Informatik“</h3>
+        <p>Hier misst du, wie wichtig das Wort <strong>Informatik</strong> in jedem Dokument ist.</p>
+        <div class="formula">
+          \[
+          \text{TF-IDF}(t,d)=\text{TF}(t,d)\cdot\text{IDF}(t)
+          \qquad
+          \text{IDF}(t)=\log\frac{N}{df(t)}
+          \]
+        </div>
+        <div class="diagram-row">
+          <div class="diagram">
+            <div class="diagram-title">TF-IDF-Fluss</div>
+            <svg viewBox="0 0 320 140" aria-label="TF-IDF Flussdiagramm">
+              <rect x="10" y="28" width="84" height="54" rx="14" fill="#ffe0cc" stroke="#d26027"/>
+              <rect x="118" y="28" width="84" height="54" rx="14" fill="#fff7ef" stroke="#7a726a"/>
+              <rect x="226" y="28" width="84" height="54" rx="14" fill="#d8f0ef" stroke="#0b6e74"/>
+              <text x="52" y="60" text-anchor="middle" fill="#77310c" font-size="15">TF</text>
+              <text x="160" y="60" text-anchor="middle" fill="#1f1b18" font-size="15">x</text>
+              <text x="268" y="60" text-anchor="middle" fill="#0b4b4e" font-size="15">IDF</text>
+              <path d="M94 55 H118" stroke="#1f1b18" stroke-width="2.5"/>
+              <path d="M202 55 H226" stroke="#1f1b18" stroke-width="2.5"/>
+              <text x="160" y="112" text-anchor="middle" fill="#665f58" font-size="13">lokal häufig + global selten = hoher Wert</text>
+            </svg>
+          </div>
+          <div class="diagram">
+            <div class="diagram-title">Gewichtungsidee</div>
+            <svg viewBox="0 0 320 140" aria-label="TF-IDF Balkendiagramm">
+              <line x1="28" y1="116" x2="300" y2="116" stroke="#7a726a" stroke-width="2"/>
+              <rect x="52" y="76" width="42" height="40" rx="8" fill="#f1b183"/>
+              <rect x="136" y="56" width="42" height="60" rx="8" fill="#d26027"/>
+              <rect x="220" y="92" width="42" height="24" rx="8" fill="#f6c8aa"/>
+              <text x="73" y="132" text-anchor="middle" fill="#665f58" font-size="12">Doc 1</text>
+              <text x="157" y="132" text-anchor="middle" fill="#665f58" font-size="12">Doc 2</text>
+              <text x="241" y="132" text-anchor="middle" fill="#665f58" font-size="12">Doc 3</text>
+            </svg>
+          </div>
+        </div>
+        <div class="steps">
+          <div class="step"><b>1</b><div>Bestimme in jedem Dokument die <strong>TF</strong>: Wie oft kommt „Informatik“ vor?</div></div>
+          <div class="step"><b>2</b><div>Berechne <strong>IDF</strong>: In wie vielen Dokumenten kommt das Wort überhaupt vor?</div></div>
+          <div class="step"><b>3</b><div>Multipliziere TF und IDF für jedes Dokument.</div></div>
+          <div class="step"><b>4</b><div>Erkläre, warum ein <strong>hoher TF-IDF-Wert</strong> auf ein besonders aussagekräftiges Wort hindeutet.</div></div>
+        </div>
+        <div class="note">
+          <strong>Denkhilfe</strong>
+          Ein Wort ist besonders interessant, wenn es in einem Dokument wichtig ist,
+          aber nicht in allen Dokumenten ständig vorkommt.
+        </div>
+      </article>
+
+      <article class="card">
+        <span class="tag">Einordnen + Diskutieren</span>
+        <h3>3. Ähnlichkeit oder Relationiertheit</h3>
+        <p>Du sollst Wortpaare beurteilen: bedeuten sie fast das Gleiche oder hängen sie nur thematisch zusammen?</p>
+        <div class="diagram-row">
+          <div class="diagram">
+            <div class="diagram-title">Begriffslandkarte</div>
+            <svg viewBox="0 0 320 180" aria-label="Semantische Landkarte">
+              <circle cx="90" cy="70" r="26" fill="#ffe0cc"/>
+              <circle cx="145" cy="82" r="26" fill="#ffd2b6"/>
+              <circle cx="250" cy="74" r="26" fill="#d8f0ef"/>
+              <circle cx="232" cy="128" r="26" fill="#c2e5e4"/>
+              <line x1="112" y1="76" x2="122" y2="78" stroke="#d26027" stroke-width="3"/>
+              <line x1="250" y1="100" x2="236" y2="108" stroke="#0b6e74" stroke-width="3"/>
+              <text x="90" y="75" text-anchor="middle" font-size="13">Hund</text>
+              <text x="145" y="87" text-anchor="middle" font-size="13">Katze</text>
+              <text x="250" y="79" text-anchor="middle" font-size="13">Auto</text>
+              <text x="232" y="133" text-anchor="middle" font-size="13">Benzin</text>
+              <text x="102" y="28" text-anchor="middle" fill="#77310c" font-size="12">ähnlich</text>
+              <text x="248" y="30" text-anchor="middle" fill="#0b4b4e" font-size="12">relationiert</text>
+            </svg>
+          </div>
+        </div>
+        <div class="steps">
+          <div class="step"><b>A</b><div><strong>Ähnlich</strong> bedeutet: fast gleiche oder sehr nahe Bedeutung. Beispiel: Kaffee / Tee.</div></div>
+          <div class="step"><b>B</b><div><strong>Relationiert</strong> bedeutet: sie gehören zusammen, sind aber nicht gleichartig. Beispiel: Auto / Benzin.</div></div>
+          <div class="step"><b>C</b><div>Danach beantwortest du kurz: Warum ist <strong>Word2Vec</strong> gut für Ähnlichkeit, aber <strong>BERT</strong> besser für Kontext und Beziehungen?</div></div>
+        </div>
+        <div class="note">
+          <strong>Kernaussage</strong>
+          Word2Vec lernt eher feste Nähe zwischen Wörtern. BERT versteht stärker den Kontext im Satz.
+        </div>
+      </article>
+    </section>
+
+    <h2 class="section-title">Spickzettel</h2>
+    <section class="cheat-grid">
+      <div class="card">
+        <div class="mini">Wenn du festhängst</div>
+        <h3>Teil 1</h3>
+        <ul>
+          <li>Skalarprodukt: Komponenten paarweise multiplizieren und addieren.</li>
+          <li>Norm: Wurzel aus der Summe der quadrierten Komponenten.</li>
+          <li>Je näher das Ergebnis an 1 liegt, desto ähnlicher.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="mini">Wenn du festhängst</div>
+        <h3>Teil 2</h3>
+        <ul>
+          <li>TF fragt: Wie häufig im Dokument?</li>
+          <li>IDF fragt: Wie selten über alle Dokumente?</li>
+          <li>Hoher TF-IDF-Wert = lokal wichtig, global eher selten.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="mini">Wenn du festhängst</div>
+        <h3>Teil 3</h3>
+        <ul>
+          <li>„Hund / Katze“: ähnlich.</li>
+          <li>„Auto / Benzin“: relationiert.</li>
+          <li>Frag dich immer: gleiche Art von Bedeutung oder nur Zusammenhang?</li>
+        </ul>
+      </div>
+    </section>
+
+    <p class="footer">
+      Wenn du willst, kann ich dir als Nächstes dieselbe Seite noch mit den <strong>konkreten Lösungen</strong> befüllen.
+    </p>
+
+    <section class="card" id="feedback-trainer"></section>
+  </main>
+  <script type="module" src="./study-feedback-client.js"></script>
+</body>
+</html>

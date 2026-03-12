@@ -2,7 +2,6 @@ import { z } from "zod";
 import { CAPABILITIES, TOOL_NAMES } from "./constants.js";
 
 const capabilityEnum = z.enum(CAPABILITIES);
-
 export const mcpAccessModeSchema = z.enum(["read-only", "default", "full-access"]);
 
 export const capabilityFlagsSchema = z.object({
@@ -216,13 +215,13 @@ export const plutoVoiceSessionStreamEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("tool_call"),
-    toolName: toolNameSchema,
+    toolName: z.string().min(1),
     summary: z.string().min(1),
     toolCallId: z.string().min(1).nullable().default(null),
   }),
   z.object({
     type: z.literal("tool_result"),
-    toolName: toolNameSchema,
+    toolName: z.string().min(1),
     summary: z.string().min(1),
     ok: z.boolean(),
     toolCallId: z.string().min(1).nullable().default(null),

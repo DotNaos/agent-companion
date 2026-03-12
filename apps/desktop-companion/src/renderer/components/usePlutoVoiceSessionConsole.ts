@@ -59,6 +59,7 @@ export function usePlutoVoiceSessionConsole({
     const [recordingMode, setRecordingMode] = useState<RecordingMode | null>(
         null,
     );
+    const [remoteSpeechActive, setRemoteSpeechActive] = useState(false);
     const [activeStatusMessage, setActiveStatusMessage] = useState<
         string | null
     >(null);
@@ -160,6 +161,7 @@ export function usePlutoVoiceSessionConsole({
     useEffect(() => {
         setSession(null);
         setTimeline([]);
+        setRemoteSpeechActive(false);
         setActiveStatusMessage(null);
         intentionalSocketCloseRef.current = false;
         transportErrorRef.current = false;
@@ -299,6 +301,7 @@ export function usePlutoVoiceSessionConsole({
             enqueueIncomingAudioChunk: playback.enqueueIncomingAudioChunk,
             markOutputTurnComplete: playback.markOutputTurnComplete,
             publishError,
+            setRemoteSpeechActive,
             setActiveStatusMessage,
             setSession,
             setStreamState,
@@ -527,6 +530,7 @@ export function usePlutoVoiceSessionConsole({
         primaryAction,
         recordingHint,
         recordingMode,
+        remoteSpeechActive,
         roleStatus,
         selectedSummary,
         sessionId,

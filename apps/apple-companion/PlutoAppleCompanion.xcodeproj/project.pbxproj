@@ -1,0 +1,553 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 63;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		03767082D6AAF0928FB1B0D2 /* PairingScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05746E4E0A8577693A22DE9 /* PairingScannerView.swift */; };
+		1F41769F608465FF015B3D09 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91694E28659404CDDCEED98A /* PairingView.swift */; };
+		376EBDDD20A65A31FEDBCE46 /* AgentCompanionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10E1E66D4D162D4874CC4F50 /* AgentCompanionModels.swift */; };
+		5348978B1F6EC5EC009E3C5D /* SessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EF39637AB94AA2B5BDF1718 /* SessionDetailView.swift */; };
+		6DD03AA322811B911EB4A9A4 /* WatchBridgeSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F450904A6D8FEF52B3F1260 /* WatchBridgeSession.swift */; };
+		70DA9ECB41568005A8C65DDF /* WatchAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11D598A289654C70068C4B29 /* WatchAppModel.swift */; };
+		7D2B0BD0F9AE625947A5169E /* PlutoWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F92EDD155C847AD6BDABC57B /* PlutoWatchApp.swift */; };
+		80662A069A52DE979DC1543B /* WatchBridgeSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F450904A6D8FEF52B3F1260 /* WatchBridgeSession.swift */; };
+		9912BA858A573A58F1D16354 /* PhoneAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE25850ACDD5283FC97ADAEF /* PhoneAppModel.swift */; };
+		A95FA961DB61FF5E660FDF5F /* AgentCompanionAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCFDFA379684A250F5189AA3 /* AgentCompanionAPI.swift */; };
+		B014411D1B37789846EBF516 /* AgentCompanionAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCFDFA379684A250F5189AA3 /* AgentCompanionAPI.swift */; };
+		B89972CC29A47C2E4BD09A2A /* AgentCompanionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10E1E66D4D162D4874CC4F50 /* AgentCompanionModels.swift */; };
+		C149377BCD1E84000A21DB34 /* PlutoPhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E6D8192866C08C27545485F /* PlutoPhoneApp.swift */; };
+		C490D631E6AC2E731E7237BE /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC263785BEB32BA6F0AC3DA6 /* SessionListView.swift */; };
+		C83806C3AE6750A1043E9908 /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C51BC7519E3949BB397D6CE /* WatchRootView.swift */; };
+		CBE63EBD257C33A038357651 /* PhoneVoiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2160F3A7505615273579B176 /* PhoneVoiceController.swift */; };
+		CD2BAAE568AC05AF2E975660 /* PlutoVoiceSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = A04D4938D680883B1071D6F9 /* PlutoVoiceSocket.swift */; };
+		D05018E5C242AEDC6A44CA84 /* MobileSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C445C1A7758A70176C92C04A /* MobileSessionStore.swift */; };
+		E8D5799F85E29058507A7239 /* PlutoVoiceSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = A04D4938D680883B1071D6F9 /* PlutoVoiceSocket.swift */; };
+		EFBC2FCEF87EE34C358C5DF7 /* MobileSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C445C1A7758A70176C92C04A /* MobileSessionStore.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		00ECE6F79A68EF8BACCBF4DF /* PlutoPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PlutoPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		10E1E66D4D162D4874CC4F50 /* AgentCompanionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCompanionModels.swift; sourceTree = "<group>"; };
+		11D598A289654C70068C4B29 /* WatchAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAppModel.swift; sourceTree = "<group>"; };
+		2160F3A7505615273579B176 /* PhoneVoiceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneVoiceController.swift; sourceTree = "<group>"; };
+		6C51BC7519E3949BB397D6CE /* WatchRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRootView.swift; sourceTree = "<group>"; };
+		6EF39637AB94AA2B5BDF1718 /* SessionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailView.swift; sourceTree = "<group>"; };
+		7E6D8192866C08C27545485F /* PlutoPhoneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlutoPhoneApp.swift; sourceTree = "<group>"; };
+		91694E28659404CDDCEED98A /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		9F450904A6D8FEF52B3F1260 /* WatchBridgeSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchBridgeSession.swift; sourceTree = "<group>"; };
+		A04D4938D680883B1071D6F9 /* PlutoVoiceSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlutoVoiceSocket.swift; sourceTree = "<group>"; };
+		BCFDFA379684A250F5189AA3 /* AgentCompanionAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCompanionAPI.swift; sourceTree = "<group>"; };
+		C445C1A7758A70176C92C04A /* MobileSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSessionStore.swift; sourceTree = "<group>"; };
+		EC263785BEB32BA6F0AC3DA6 /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListView.swift; sourceTree = "<group>"; };
+		F05746E4E0A8577693A22DE9 /* PairingScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingScannerView.swift; sourceTree = "<group>"; };
+		F92EDD155C847AD6BDABC57B /* PlutoWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlutoWatchApp.swift; sourceTree = "<group>"; };
+		FDF87666458F923621C99B9E /* PlutoWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PlutoWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FE25850ACDD5283FC97ADAEF /* PhoneAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneAppModel.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		19D3204BAAD394645CB19FF8 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				10E1E66D4D162D4874CC4F50 /* AgentCompanionModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		23C6BC4DF078EF557A261A2B = {
+			isa = PBXGroup;
+			children = (
+				58C0364B1507AAFE0A420D57 /* iPhone */,
+				5CBA622950DB923325C1FD2C /* Shared */,
+				678672ACD68951367642E4EB /* Watch */,
+				9FC40918238988DAD1A2A6BC /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		2A0FF3520AFF01A0A4042B44 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				7E6D8192866C08C27545485F /* PlutoPhoneApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		42C7DCA02C90E5557FD4D10E /* Bridge */ = {
+			isa = PBXGroup;
+			children = (
+				9F450904A6D8FEF52B3F1260 /* WatchBridgeSession.swift */,
+			);
+			path = Bridge;
+			sourceTree = "<group>";
+		};
+		4B0F8EBDB5FAA7D6B432525C /* Voice */ = {
+			isa = PBXGroup;
+			children = (
+				A04D4938D680883B1071D6F9 /* PlutoVoiceSocket.swift */,
+			);
+			path = Voice;
+			sourceTree = "<group>";
+		};
+		58C0364B1507AAFE0A420D57 /* iPhone */ = {
+			isa = PBXGroup;
+			children = (
+				2A0FF3520AFF01A0A4042B44 /* App */,
+				8A6FA980F6AF170B011862D9 /* Features */,
+			);
+			path = iPhone;
+			sourceTree = "<group>";
+		};
+		5CBA622950DB923325C1FD2C /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				42C7DCA02C90E5557FD4D10E /* Bridge */,
+				19D3204BAAD394645CB19FF8 /* Models */,
+				E697C608AE434C58D82E5903 /* Networking */,
+				C708045C9014C8A37363383C /* Storage */,
+				4B0F8EBDB5FAA7D6B432525C /* Voice */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		678672ACD68951367642E4EB /* Watch */ = {
+			isa = PBXGroup;
+			children = (
+				68A6CE74505E0E23B4C68CB9 /* App */,
+				973795F0FEC183202478C42C /* Features */,
+			);
+			path = Watch;
+			sourceTree = "<group>";
+		};
+		68A6CE74505E0E23B4C68CB9 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				F92EDD155C847AD6BDABC57B /* PlutoWatchApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		8A6FA980F6AF170B011862D9 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				F11C8D8B1EA550458E5A52E8 /* Pairing */,
+				D4B41A7A507A9AC6F4B64015 /* Sessions */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		973795F0FEC183202478C42C /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				11D598A289654C70068C4B29 /* WatchAppModel.swift */,
+				6C51BC7519E3949BB397D6CE /* WatchRootView.swift */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		9FC40918238988DAD1A2A6BC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				00ECE6F79A68EF8BACCBF4DF /* PlutoPhone.app */,
+				FDF87666458F923621C99B9E /* PlutoWatch.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		C708045C9014C8A37363383C /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				C445C1A7758A70176C92C04A /* MobileSessionStore.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		D4B41A7A507A9AC6F4B64015 /* Sessions */ = {
+			isa = PBXGroup;
+			children = (
+				FE25850ACDD5283FC97ADAEF /* PhoneAppModel.swift */,
+				2160F3A7505615273579B176 /* PhoneVoiceController.swift */,
+				6EF39637AB94AA2B5BDF1718 /* SessionDetailView.swift */,
+				EC263785BEB32BA6F0AC3DA6 /* SessionListView.swift */,
+			);
+			path = Sessions;
+			sourceTree = "<group>";
+		};
+		E697C608AE434C58D82E5903 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				BCFDFA379684A250F5189AA3 /* AgentCompanionAPI.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		F11C8D8B1EA550458E5A52E8 /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+				F05746E4E0A8577693A22DE9 /* PairingScannerView.swift */,
+				91694E28659404CDDCEED98A /* PairingView.swift */,
+			);
+			path = Pairing;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		8A3BAF3FD653F6DC51AE052B /* PlutoPhone */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BAD716B3A112E20A6D735331 /* Build configuration list for PBXNativeTarget "PlutoPhone" */;
+			buildPhases = (
+				AEDD1EB9B22E0A0B435369C7 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PlutoPhone;
+			packageProductDependencies = (
+			);
+			productName = PlutoPhone;
+			productReference = 00ECE6F79A68EF8BACCBF4DF /* PlutoPhone.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F63DB46C921DB7D68F2A9DCF /* PlutoWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 28C89525AFEF20FC3886B521 /* Build configuration list for PBXNativeTarget "PlutoWatch" */;
+			buildPhases = (
+				48084B98D75A3DADACC92DF7 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PlutoWatch;
+			packageProductDependencies = (
+			);
+			productName = PlutoWatch;
+			productReference = FDF87666458F923621C99B9E /* PlutoWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		9D80B3347A6FE133AA074FF7 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					8A3BAF3FD653F6DC51AE052B = {
+						ProvisioningStyle = Automatic;
+					};
+					F63DB46C921DB7D68F2A9DCF = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = A0CF8931985A09AD6681C617 /* Build configuration list for PBXProject "PlutoAppleCompanion" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 23C6BC4DF078EF557A261A2B;
+			minimizedProjectReferenceProxies = 1;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8A3BAF3FD653F6DC51AE052B /* PlutoPhone */,
+				F63DB46C921DB7D68F2A9DCF /* PlutoWatch */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		48084B98D75A3DADACC92DF7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A95FA961DB61FF5E660FDF5F /* AgentCompanionAPI.swift in Sources */,
+				B89972CC29A47C2E4BD09A2A /* AgentCompanionModels.swift in Sources */,
+				EFBC2FCEF87EE34C358C5DF7 /* MobileSessionStore.swift in Sources */,
+				CD2BAAE568AC05AF2E975660 /* PlutoVoiceSocket.swift in Sources */,
+				7D2B0BD0F9AE625947A5169E /* PlutoWatchApp.swift in Sources */,
+				70DA9ECB41568005A8C65DDF /* WatchAppModel.swift in Sources */,
+				80662A069A52DE979DC1543B /* WatchBridgeSession.swift in Sources */,
+				C83806C3AE6750A1043E9908 /* WatchRootView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AEDD1EB9B22E0A0B435369C7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B014411D1B37789846EBF516 /* AgentCompanionAPI.swift in Sources */,
+				376EBDDD20A65A31FEDBCE46 /* AgentCompanionModels.swift in Sources */,
+				D05018E5C242AEDC6A44CA84 /* MobileSessionStore.swift in Sources */,
+				03767082D6AAF0928FB1B0D2 /* PairingScannerView.swift in Sources */,
+				1F41769F608465FF015B3D09 /* PairingView.swift in Sources */,
+				9912BA858A573A58F1D16354 /* PhoneAppModel.swift in Sources */,
+				CBE63EBD257C33A038357651 /* PhoneVoiceController.swift in Sources */,
+				C149377BCD1E84000A21DB34 /* PlutoPhoneApp.swift in Sources */,
+				E8D5799F85E29058507A7239 /* PlutoVoiceSocket.swift in Sources */,
+				5348978B1F6EC5EC009E3C5D /* SessionDetailView.swift in Sources */,
+				C490D631E6AC2E731E7237BE /* SessionListView.swift in Sources */,
+				6DD03AA322811B911EB4A9A4 /* WatchBridgeSession.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		3D6451B645AA32DF41FD25E3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		3DAC7328E3F61A9A5C27552E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R72P4M9WMS;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Pluto;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Pluto scans pairing QR codes from your laptop screen.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Pluto on iPhone connects to your laptop companion on the local network.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Pluto needs microphone access for voice chat.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Pluto may display speech transcripts for conversation history.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dotnaos.agentcompanion.phone;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		53FF8B4C2C8F353DDA64B363 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		71B4900DF620FE8A728D2BF2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R72P4M9WMS;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Watch/App/Info.plist;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dotnaos.agentcompanion.phone.watch;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		76138EBB5B57089376A91384 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R72P4M9WMS;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Pluto;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Pluto scans pairing QR codes from your laptop screen.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Pluto on iPhone connects to your laptop companion on the local network.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Pluto needs microphone access for voice chat.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Pluto may display speech transcripts for conversation history.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dotnaos.agentcompanion.phone;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		935DCEB31C4FD44FD990ABF9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R72P4M9WMS;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Watch/App/Info.plist;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dotnaos.agentcompanion.phone.watch;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		28C89525AFEF20FC3886B521 /* Build configuration list for PBXNativeTarget "PlutoWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				71B4900DF620FE8A728D2BF2 /* Debug */,
+				935DCEB31C4FD44FD990ABF9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A0CF8931985A09AD6681C617 /* Build configuration list for PBXProject "PlutoAppleCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3D6451B645AA32DF41FD25E3 /* Debug */,
+				53FF8B4C2C8F353DDA64B363 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BAD716B3A112E20A6D735331 /* Build configuration list for PBXNativeTarget "PlutoPhone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				76138EBB5B57089376A91384 /* Debug */,
+				3DAC7328E3F61A9A5C27552E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 9D80B3347A6FE133AA074FF7 /* Project object */;
+}

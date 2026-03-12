@@ -1,5 +1,10 @@
 import { toolDescriptions, toolInputSchemas, type ToolName } from "@agent-companion/shared";
 import type { FunctionCall, FunctionDeclaration, FunctionResponse } from "@google/genai";
+import {
+  buildLocalPlutoToolDeclarations,
+  executeLocalPlutoTool,
+  isLocalPlutoToolName,
+} from "./pluto-local-tools.js";
 import { toJSONSchema } from "zod";
 
 export interface PlutoToolExecutionResult {
@@ -26,6 +31,81 @@ export interface PlutoExecutedFunctionCall {
   result: PlutoToolExecutionResult;
 }
 
+function tokenizeCommand(command: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+
+  for (const character of command) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) {
+        quote = null;
+      } else {
+        current += character;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += character;
+  }
+
+  if (escaped) {
+    current += "\\";
+  }
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+
+  return tokens;
+}
+
+function normalizeToolPayload(toolName: ToolName, payload: unknown): unknown {
+  if (
+    toolName !== "run_command" ||
+    !payload ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+    return payload;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const normalizedPayload: Record<string, unknown> = { ...record };
+
+  if (
+    typeof normalizedPayload.workingDirectory !== "string" &&
+    typeof normalizedPayload.path === "string"
+  ) {
+    normalizedPayload.workingDirectory = normalizedPayload.path;
+  }
+
+  if (typeof normalizedPayload.command === "string") {
+    normalizedPayload.command = tokenizeCommand(normalizedPayload.command);
+  }
+
+  return normalizedPayload;
+}
+
 function toFunctionResponsePayload(result: PlutoToolExecutionResult): Record<string, unknown> {
   if (result.ok) {
     return {
@@ -44,14 +124,17 @@ function toFunctionResponsePayload(result: PlutoToolExecutionResult): Record<str
 }
 
 export function buildPlutoToolDeclarations(): FunctionDeclaration[] {
-  return (Object.keys(toolInputSchemas) as ToolName[]).map((toolName) => ({
-    name: toolName,
-    description: toolDescriptions[toolName],
-    parametersJsonSchema: toJSONSchema(toolInputSchemas[toolName], {
-      target: "draft-7",
-      io: "input",
-    }) as Record<string, unknown>,
-  }));
+  return [
+    ...(Object.keys(toolInputSchemas) as ToolName[]).map((toolName) => ({
+      name: toolName,
+      description: toolDescriptions[toolName],
+      parametersJsonSchema: toJSONSchema(toolInputSchemas[toolName], {
+        target: "draft-7",
+        io: "input",
+      }) as Record<string, unknown>,
+    })),
+    ...buildLocalPlutoToolDeclarations(),
+  ];
 }
 
 export async function executePlutoFunctionCalls(
@@ -66,7 +149,7 @@ export async function executePlutoFunctionCalls(
 
   for (const functionCall of functionCalls) {
     const toolName = functionCall.name;
-    if (!toolName || !(toolName in toolInputSchemas)) {
+    if (!toolName) {
       const result: PlutoToolExecutionResult = {
         ok: false,
         error: {
@@ -83,13 +166,30 @@ export async function executePlutoFunctionCalls(
       continue;
     }
 
-    const result = await executeTool(
-      toolName as ToolName,
-      functionCall.args ?? {},
-      {
-        toolCallId: functionCall.id ?? null,
-      },
-    );
+    let result: PlutoToolExecutionResult;
+    if (isLocalPlutoToolName(toolName)) {
+      result = await executeLocalPlutoTool(toolName, functionCall.args ?? {});
+    } else if (toolName in toolInputSchemas) {
+      const normalizedPayload = normalizeToolPayload(
+        toolName as ToolName,
+        functionCall.args ?? {},
+      );
+      result = await executeTool(
+        toolName as ToolName,
+        normalizedPayload,
+        {
+          toolCallId: functionCall.id ?? null,
+        },
+      );
+    } else {
+      result = {
+        ok: false,
+        error: {
+          code: "UNKNOWN_TOOL",
+          message: `Pluto cannot execute the requested tool: ${toolName}`,
+        },
+      };
+    }
     executions.push({ functionCall, result });
     responses.push({
       id: functionCall.id,

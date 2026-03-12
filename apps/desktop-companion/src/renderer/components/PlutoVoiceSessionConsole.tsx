@@ -1,21 +1,11 @@
 import { Expand, Mic, MicOff, Radio, Volume2 } from 'lucide-react';
-import {
-    createPcmChunkBlob,
-    encodePcm16Chunk,
-    getPlutoPcmMimeType,
-} from './PlutoVoiceSessionConsole.audio.js';
-import {
-    VoiceChatComposer,
-    getVoiceConsolePrimaryAction,
-} from './PlutoVoiceSessionConsole.controls.js';
+import { useEffect } from 'react';
+import { VoiceChatComposer } from './PlutoVoiceSessionConsole.controls.js';
 import { VoiceConsoleSupportPanel } from './PlutoVoiceSessionConsole.device-panel.js';
 import type { PlutoVoiceSessionConsoleProps } from './PlutoVoiceSessionConsole.shared.js';
 import {
-    appendVoiceTimelineEntry,
-    getVoiceTimelineLayout,
-    mergeVoiceTimelineText,
+    deriveOverlayBubblePreviewHistory,
     renderVoiceTimeline,
-    shouldMergeVoiceTimelineEntry,
 } from './PlutoVoiceSessionConsole.timeline.js';
 import { Badge } from './ui/badge.js';
 import { Button } from './ui/button.js';
@@ -49,6 +39,7 @@ export function PlutoVoiceSessionConsole(props: PlutoVoiceSessionConsoleProps) {
         primaryAction,
         recordingHint,
         recordingMode,
+        remoteSpeechActive,
         roleStatus,
         sessionId,
         setIsChatExpanded,
@@ -61,6 +52,22 @@ export function PlutoVoiceSessionConsole(props: PlutoVoiceSessionConsoleProps) {
         requestMic,
         visibleTimeline,
     } = usePlutoVoiceSessionConsole(props);
+
+    const isToolCalling =
+        activeStatusMessage?.startsWith('Codex uses ') ?? false;
+
+    useEffect(() => {
+        props.onOverlayPreviewChange?.(
+            deriveOverlayBubblePreviewHistory(timeline, 2),
+        );
+    }, [props.onOverlayPreviewChange, timeline]);
+
+    useEffect(() => {
+        props.onOverlayActivityChange?.({
+            isSpeaking: isPlaying || remoteSpeechActive,
+            isToolCalling,
+        });
+    }, [isPlaying, isToolCalling, props.onOverlayActivityChange, remoteSpeechActive]);
 
     if (isOverlay) {
         return (
@@ -241,12 +248,16 @@ function formatStreamState(
 }
 
 export {
-    appendVoiceTimelineEntry,
     createPcmChunkBlob,
     encodePcm16Chunk,
-    getPlutoPcmMimeType,
-    getVoiceConsolePrimaryAction,
+    getPlutoPcmMimeType
+} from './PlutoVoiceSessionConsole.audio.js';
+export { getVoiceConsolePrimaryAction } from './PlutoVoiceSessionConsole.controls.js';
+export {
+    appendVoiceTimelineEntry,
+    deriveLatestOverlayBubble,
+    deriveOverlayBubblePreviewHistory,
     getVoiceTimelineLayout,
     mergeVoiceTimelineText,
-    shouldMergeVoiceTimelineEntry,
-};
+    shouldMergeVoiceTimelineEntry
+} from './PlutoVoiceSessionConsole.timeline.js';

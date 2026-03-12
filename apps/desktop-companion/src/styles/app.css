@@ -435,6 +435,83 @@ pre {
     border-color: rgba(126, 182, 255, 0.15);
 }
 
+.pet-avatar-dialog-stack {
+    position: absolute;
+    right: -4px;
+    bottom: 118px;
+    width: 230px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 3;
+}
+
+.pet-avatar-dialog-bubble {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    padding: 14px 16px;
+    border-radius: 22px;
+}
+
+.pet-avatar-dialog-bubble::after {
+    right: 28px;
+    bottom: -8px;
+    width: 16px;
+    height: 16px;
+}
+
+.pet-avatar-dialog-current {
+    opacity: 1;
+    transform-origin: bottom right;
+}
+
+.pet-avatar-dialog-history {
+    opacity: 0.62;
+    transform: scale(0.92) translateX(-8px);
+    filter: saturate(0.82);
+}
+
+.pet-avatar-dialog-you {
+    border-color: rgba(74, 207, 255, 0.22);
+    background: linear-gradient(
+        145deg,
+        rgba(8, 35, 56, 0.96),
+        rgba(6, 18, 31, 0.98)
+    );
+}
+
+.pet-avatar-dialog-you .pet-bubble-header::before {
+    background: radial-gradient(circle at 30% 30%, #87e6ff, #2e7cab);
+}
+
+.pet-avatar-dialog-pluto {
+    border-color: rgba(255, 222, 170, 0.18);
+    background: linear-gradient(
+        145deg,
+        rgba(28, 22, 18, 0.96),
+        rgba(14, 11, 8, 0.98)
+    );
+}
+
+.pet-avatar-dialog-system {
+    border-color: rgba(190, 167, 255, 0.16);
+    background: linear-gradient(
+        145deg,
+        rgba(22, 18, 39, 0.96),
+        rgba(9, 8, 20, 0.98)
+    );
+}
+
+.pet-avatar-dialog-system .pet-bubble-header::before {
+    background: radial-gradient(circle at 30% 30%, #d9ccff, #7f61d6);
+}
+
+.pet-avatar-dialog-error {
+    border-color: rgba(255, 122, 154, 0.28);
+}
+
 .pet-bubble::after {
     content: '';
     position: absolute;

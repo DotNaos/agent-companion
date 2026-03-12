@@ -13,6 +13,7 @@ import express from "express";
 import http from "node:http";
 import type { RawData } from "ws";
 import { WebSocketServer } from "ws";
+import { handlePlutoCodexMcpRequest } from "./pluto-codex-mcp.js";
 import type { RunnerState } from "./state.js";
 
 function decodeWebSocketMessage(rawData: RawData) {
@@ -104,6 +105,10 @@ export async function startControlServer(state: RunnerState, port: number) {
 
   app.post("/internal/pluto/sessions/:sessionId/close", (req, res) => {
     res.json(state.closePlutoVoiceSession(req.params.sessionId));
+  });
+
+  app.post("/internal/pluto/sessions/:sessionId/codex-mcp", async (req, res) => {
+    await handlePlutoCodexMcpRequest(state, req.params.sessionId, req, res);
   });
 
   app.post("/internal/approvals/decision", async (req, res) => {

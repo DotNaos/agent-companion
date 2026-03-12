@@ -49,6 +49,7 @@ export function handlePlutoStreamEvent({
     enqueueIncomingAudioChunk,
     markOutputTurnComplete,
     publishError,
+    setRemoteSpeechActive,
     setActiveStatusMessage,
     setSession,
     setStreamState,
@@ -67,6 +68,7 @@ export function handlePlutoStreamEvent({
     ) => void;
     markOutputTurnComplete: (turnId: number) => void;
     publishError: (message: string) => void;
+    setRemoteSpeechActive: Dispatch<SetStateAction<boolean>>;
     setActiveStatusMessage: Dispatch<SetStateAction<string | null>>;
     setSession: Dispatch<SetStateAction<PlutoVoiceSession | null>>;
     setStreamState: Dispatch<SetStateAction<StreamState>>;
@@ -89,17 +91,19 @@ export function handlePlutoStreamEvent({
             });
             return;
         case 'output_transcription':
-            setActiveStatusMessage('Pluto is speaking…');
+            setActiveStatusMessage('Codex is responding…');
             appendTimelineEntry({
                 actor: 'pluto',
-                label: 'Pluto',
+                label: 'Codex',
                 text: event.text,
                 tone: 'neutral',
                 turnId: event.turnId,
+                overlayBubble: false,
             });
             return;
         case 'audio_chunk':
             setActiveStatusMessage('Pluto is speaking…');
+            setRemoteSpeechActive(true);
             enqueueIncomingAudioChunk(
                 event.turnId,
                 event.audioBase64,
@@ -107,30 +111,47 @@ export function handlePlutoStreamEvent({
             );
             return;
         case 'output_turn_complete':
-            setActiveStatusMessage('Pluto finished this response.');
+            setActiveStatusMessage('Codex finished this response.');
+            setRemoteSpeechActive(false);
             markOutputTurnComplete(event.turnId);
             return;
         case 'tool_call':
-            setActiveStatusMessage(`Pluto uses ${event.toolName}…`);
-            appendTimelineEntry({
-                actor: 'system',
-                label: 'Tool',
-                text: `Calling ${event.toolName}: ${event.summary}`,
-                tone: 'accent',
-            });
+            if (event.toolName === 'speak_to_user') {
+                setActiveStatusMessage('Pluto is preparing speech…');
+                return;
+            }
+            setActiveStatusMessage(`Codex uses ${event.toolName}…`);
+            appendTimelineEntry(buildToolEntry(event.toolName, event.summary, true));
             return;
         case 'tool_result':
+            if (event.toolName === 'codex_reasoning' && event.ok) {
+                appendTimelineEntry({
+                    actor: 'system',
+                    label: 'Reasoning',
+                    text: event.summary,
+                    tone: 'neutral',
+                    overlayBubble: false,
+                });
+                return;
+            }
+            if (event.toolName === 'speak_to_user' && event.ok) {
+                setActiveStatusMessage('Pluto is speaking…');
+                setRemoteSpeechActive(true);
+                appendTimelineEntry({
+                    actor: 'pluto',
+                    label: 'Pluto',
+                    text: event.summary,
+                    tone: 'neutral',
+                    overlayBubble: true,
+                });
+                return;
+            }
             setActiveStatusMessage(
                 event.ok
                     ? `${event.toolName} finished.`
                     : `${event.toolName} failed.`,
             );
-            appendTimelineEntry({
-                actor: 'system',
-                label: event.ok ? 'Tool' : 'Tool error',
-                text: event.summary,
-                tone: event.ok ? 'neutral' : 'error',
-            });
+            appendTimelineEntry(buildToolEntry(event.toolName, event.summary, false, event.ok));
             return;
         case 'approval_requested':
             setActiveStatusMessage(
@@ -154,14 +175,18 @@ export function handlePlutoStreamEvent({
                 label: 'Approval',
                 text:
                     event.decision === 'approved'
-                        ? `Approval granted for ${event.toolName}. Pluto continues.`
-                        : `Approval denied for ${event.toolName}. Pluto cannot continue with that action.`,
+                        ? `Approval granted for ${event.toolName}. Codex continues.`
+                        : `Approval denied for ${event.toolName}. Codex cannot continue with that action.`,
                 tone: event.decision === 'approved' ? 'accent' : 'error',
             });
             return;
         case 'status':
             if (event.interrupted) {
                 stopPlayback();
+                setRemoteSpeechActive(false);
+            }
+            if (event.status === 'idle') {
+                setRemoteSpeechActive(false);
             }
             setActiveStatusMessage(describeStatusEvent(event));
             setSession((current) =>
@@ -176,6 +201,7 @@ export function handlePlutoStreamEvent({
         case 'error':
             streamTerminalEventRef.current = 'error';
             stopPlayback();
+            setRemoteSpeechActive(false);
             setActiveStatusMessage('Pluto hit an error.');
             appendTimelineEntry({
                 actor: 'system',
@@ -188,6 +214,7 @@ export function handlePlutoStreamEvent({
         case 'closed':
             streamTerminalEventRef.current = 'closed';
             stopPlayback();
+            setRemoteSpeechActive(false);
             setActiveStatusMessage(event.reason ?? 'Session closed.');
             appendTimelineEntry({
                 actor: 'system',
@@ -201,23 +228,57 @@ export function handlePlutoStreamEvent({
     }
 }
 
+function buildToolEntry(
+    toolName: string,
+    summary: string,
+    isCall: boolean,
+    ok = true,
+): Omit<VoiceTimelineEntry, 'id' | 'createdAt'> {
+    return {
+        actor: 'system' as const,
+        label: ok ? 'Tool' : 'Tool error',
+        text: buildCompactToolText(toolName, summary, isCall, ok),
+        details: summary,
+        tone: isCall ? 'accent' : ok ? 'neutral' : 'error',
+    };
+}
+
+function buildCompactToolText(
+    toolName: string,
+    summary: string,
+    isCall: boolean,
+    ok: boolean,
+) {
+    if (toolName === 'codex_command') {
+        return isCall ? 'Running command' : ok ? 'Command finished' : 'Command failed';
+    }
+    if (toolName === 'codex_patch') {
+        return isCall ? 'Applying file changes' : ok ? 'File changes finished' : 'File changes failed';
+    }
+    return isCall
+        ? `Calling ${toolName}`
+        : ok
+          ? `${toolName} finished`
+          : `${toolName} failed`;
+}
+
 function describeStatusEvent(
     event: Extract<PlutoVoiceSessionStreamEvent, { type: 'status' }>,
 ) {
     if (event.waitingForInput) {
-        return 'Pluto is waiting for the next turn.';
+        return 'Codex is waiting for the next turn.';
     }
     if (event.interrupted) {
-        return 'Pluto was interrupted.';
+        return 'The current response was interrupted.';
     }
     if (event.status === 'listening') {
         return 'Pluto is listening.';
     }
     if (event.status === 'responding') {
-        return 'Pluto is responding.';
+        return 'Codex is responding.';
     }
     if (event.status === 'error') {
-        return 'Pluto hit an error.';
+        return 'Codex hit an error.';
     }
     return 'Pluto is idle.';
 }

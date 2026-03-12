@@ -17,6 +17,8 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   GEMINI_API_KEY: z.string().default(""),
   PLUTO_MODEL: z.string().min(1).default("models/gemini-2.5-flash-native-audio-preview-12-2025"),
+  PLUTO_CODEX_MODEL: z.string().min(1).default("gpt-5.4"),
+  PLUTO_CODEX_WORKING_DIRECTORY: z.string().default(process.cwd()),
   PLUTO_VOICE_NAME: z.string().min(1).default("Achird"),
   LOCAL_RUNNER_PORT: z.coerce.number().int().positive().default(DEFAULT_LOCAL_RUNNER_PORT),
   DESKTOP_SERVER_PORT: z.coerce.number().int().positive().default(DEFAULT_DESKTOP_SERVER_PORT),
