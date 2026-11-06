@@ -90,3 +90,7 @@ The current test suite covers the critical safety rules requested in the prompt,
 ## Standalone Product Positioning
 
 `agent-companion` is intentionally packaged and documented as a reusable standalone product. Any later Aryazos integration should consume its public interfaces rather than collapsing these boundaries.
+
+## Lizenz
+
+GNU Affero General Public License v3.0 or later, siehe [LICENSE](LICENSE). © Oliver Schütz
